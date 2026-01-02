@@ -522,7 +522,12 @@ function generate_all_figures(suite::BenchmarkSuite, output_dir::String)
         results = suite.experiments["gf2_validation"].results
         if !isempty(results)
             fig1_path = joinpath(output_dir, "fig1_gf2_validation.pdf")
-            figure_gf2_validation(results; save_path=fig1_path)
+            try
+                figure_gf2_validation(results; save_path=fig1_path)
+            catch e
+                @warn "Failed to generate GF(2) validation figure" exception=e
+                print_gf2_summary(results)
+            end
         end
     end
 
@@ -531,7 +536,12 @@ function generate_all_figures(suite::BenchmarkSuite, output_dir::String)
         results = suite.experiments["ofd_vs_obd"].results
         if !isempty(results)
             fig2_path = joinpath(output_dir, "fig2_ofd_vs_obd.pdf")
-            figure_ofd_vs_obd(results; save_path=fig2_path)
+            try
+                figure_ofd_vs_obd(results; save_path=fig2_path)
+            catch e
+                @warn "Failed to generate OFD vs OBD figure" exception=e
+                print_strategy_summary_text(results)
+            end
         end
     end
 
@@ -540,7 +550,12 @@ function generate_all_figures(suite::BenchmarkSuite, output_dir::String)
         results = suite.experiments["scaling"].results
         if !isempty(results)
             fig3_path = joinpath(output_dir, "fig3_scaling.pdf")
-            figure_scaling_analysis(results; save_path=fig3_path)
+            try
+                figure_scaling_analysis(results; save_path=fig3_path)
+            catch e
+                @warn "Failed to generate scaling figure" exception=e
+                print_scaling_summary_text(results)
+            end
         end
     end
 
@@ -549,7 +564,12 @@ function generate_all_figures(suite::BenchmarkSuite, output_dir::String)
         results = suite.experiments["hybrid_strategy"].results
         if !isempty(results)
             fig4_path = joinpath(output_dir, "fig4_hybrid_benefits.pdf")
-            figure_hybrid_benefits(results; save_path=fig4_path)
+            try
+                figure_hybrid_benefits(results; save_path=fig4_path)
+            catch e
+                @warn "Failed to generate hybrid benefits figure" exception=e
+                print_hybrid_summary_text(results)
+            end
         end
     end
 

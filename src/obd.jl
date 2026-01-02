@@ -369,116 +369,462 @@ Decompose a two-qubit Clifford into a sequence of elementary gates on qubits q1,
 # Algorithm
 Uses the canonical decomposition:
     C = (L₁ ⊗ L₂) · E · (R₁ ⊗ R₂)
-where L₁, L₂, R₁, R₂ are single-qubit Cliffords and E is an entangling gate
-from {I, CNOT, iSWAP, SWAP}.
+where L₁, L₂, R₁, R₂ are single-qubit Cliffords and E is an entangling gate.
 
-For simplicity, we use a direct approach by finding the gate sequence that
-matches C's stabilizer tableau.
+We use stabilizer tableau comparison for exact matching.
 """
 function decompose_two_qubit_clifford(C::CliffordOperator, q1::Int, q2::Int)::Vector
-    # For simplicity, we directly search for a gate sequence that reproduces C
-    # This is a known problem with standard solutions (see Aaronson-Gottesman)
+    # Use cached decomposition if available
+    if haskey(TWO_QUBIT_CLIFFORD_DECOMPOSITION_CACHE, C)
+        return remap_decomposition(TWO_QUBIT_CLIFFORD_DECOMPOSITION_CACHE[C], q1, q2)
+    end
 
-    # Standard decomposition: any two-qubit Clifford can be decomposed as
-    # at most 9 gates: 4 single-qubit + CNOT + 4 single-qubit
-    # (Maslov & Roetteler, 2018)
+    # Try to find decomposition via systematic search
+    result = find_clifford_decomposition(C, q1, q2)
 
-    # For our purposes, we'll use a lookup table for common cases
-    # and fall back to a generic decomposition
+    if result !== nothing
+        return result
+    end
 
-    gates = []
+    # Last resort: use matrix-based synthesis
+    return synthesize_clifford_from_matrix(C, q1, q2)
+end
 
+"""
+    find_clifford_decomposition(C::CliffordOperator, q1::Int, q2::Int) -> Union{Vector, Nothing}
+
+Find a gate decomposition for a two-qubit Clifford by comparing stabilizer tableaux.
+"""
+function find_clifford_decomposition(C::CliffordOperator, q1::Int, q2::Int)::Union{Vector, Nothing}
+    # The entangling gate classes that span all two-qubit Cliffords
+    # Based on the canonical form: any 2-qubit Clifford needs at most 3 CNOTs
+    entangling_classes = [
+        [],                                    # Identity class
+        [sCNOT(1, 2)],                        # Single CNOT
+        [sCNOT(2, 1)],
+        [sCPHASE(1, 2)],                      # CZ
+        [sSWAP(1, 2)],                        # SWAP
+        [sCNOT(1, 2), sCNOT(2, 1)],           # Two CNOTs
+        [sCNOT(2, 1), sCNOT(1, 2)],
+        [sCNOT(1, 2), sCNOT(2, 1), sCNOT(1, 2)],  # Three CNOTs (covers iSWAP class)
+    ]
+
+    # Search over canonical decomposition: (L1 ⊗ L2) · E · (R1 ⊗ R2)
+    for entangling in entangling_classes
+        result = search_with_entangling_class(C, entangling, q1, q2)
+        if result !== nothing
+            return result
+        end
+    end
+
+    return nothing
+end
+
+"""
+    search_with_entangling_class(C::CliffordOperator, entangling::Vector, q1::Int, q2::Int)
+
+Search for single-qubit Cliffords that complete the decomposition.
+"""
+function search_with_entangling_class(C::CliffordOperator, entangling::Vector, q1::Int, q2::Int)::Union{Vector, Nothing}
+    # Build the entangling part on 2 qubits
+    E_dest = one(Destabilizer, 2)
+    for g in entangling
+        apply!(E_dest, g)
+    end
+    E = CliffordOperator(E_dest)
+
+    # We need to find L1, L2, R1, R2 such that:
+    # C = (L1 ⊗ L2) · E · (R1 ⊗ R2)
+    #
+    # Rearranging: (L1† ⊗ L2†) · C = E · (R1 ⊗ R2)
+    #
+    # Strategy: For each combination of R1, R2, compute E · (R1 ⊗ R2)
+    # then find L1, L2 that complete it
+
+    for r1_idx in 1:24
+        for r2_idx in 1:24
+            # Build R = R1 ⊗ R2 on 2 qubits
+            R_dest = one(Destabilizer, 2)
+            for g in resolve_single_qubit_clifford_local(r1_idx, 1)
+                apply!(R_dest, g)
+            end
+            for g in resolve_single_qubit_clifford_local(r2_idx, 2)
+                apply!(R_dest, g)
+            end
+            R = CliffordOperator(R_dest)
+
+            # Compute E · R
+            ER_dest = one(Destabilizer, 2)
+            apply!(ER_dest, R)
+            apply!(ER_dest, E)
+            ER = CliffordOperator(ER_dest)
+
+            # Now find L1, L2 such that L · ER = C
+            # Equivalently: L = C · ER†
+            ER_inv = inv(ER)
+
+            # Compute C · ER†
+            target_L_dest = one(Destabilizer, 2)
+            apply!(target_L_dest, ER_inv)
+            apply!(target_L_dest, C)
+            target_L = CliffordOperator(target_L_dest)
+
+            # Check if target_L is a tensor product of single-qubit Cliffords
+            l1_idx, l2_idx = decompose_as_tensor_product(target_L)
+
+            if l1_idx !== nothing && l2_idx !== nothing
+                # Found a candidate decomposition - verify it before returning
+                gates = Vector{Any}()
+
+                # Apply R1, R2
+                append!(gates, resolve_single_qubit_clifford_local(r1_idx, 1))
+                append!(gates, resolve_single_qubit_clifford_local(r2_idx, 2))
+
+                # Apply entangling gates
+                append!(gates, entangling)
+
+                # Apply L1, L2
+                append!(gates, resolve_single_qubit_clifford_local(l1_idx, 1))
+                append!(gates, resolve_single_qubit_clifford_local(l2_idx, 2))
+
+                # Verify the decomposition is correct before returning
+                D_verify = one(Destabilizer, 2)
+                for g in gates
+                    apply!(D_verify, g)
+                end
+                C_verify = CliffordOperator(D_verify)
+
+                if cliffords_equal(C, C_verify)
+                    # Verified correct - remap to actual qubit indices
+                    return remap_gates(gates, q1, q2)
+                end
+                # Otherwise continue searching
+            end
+        end
+    end
+
+    return nothing
+end
+
+"""
+    decompose_as_tensor_product(C::CliffordOperator) -> Tuple{Union{Int, Nothing}, Union{Int, Nothing}}
+
+Check if a 2-qubit Clifford is a tensor product of single-qubit Cliffords.
+Returns (l1_idx, l2_idx) if successful, (nothing, nothing) otherwise.
+"""
+function decompose_as_tensor_product(C::CliffordOperator)::Tuple{Union{Int, Nothing}, Union{Int, Nothing}}
+    # A tensor product L1 ⊗ L2 has the property that:
+    # - The action on qubit 1 is independent of qubit 2
+    # - The action on qubit 2 is independent of qubit 1
+
+    # Check by comparing with all 24×24 tensor products
+    for l1_idx in 1:24
+        for l2_idx in 1:24
+            # Build L1 ⊗ L2
+            L_dest = one(Destabilizer, 2)
+            for g in resolve_single_qubit_clifford_local(l1_idx, 1)
+                apply!(L_dest, g)
+            end
+            for g in resolve_single_qubit_clifford_local(l2_idx, 2)
+                apply!(L_dest, g)
+            end
+            L = CliffordOperator(L_dest)
+
+            # Compare stabilizer tableaux
+            if cliffords_equal(C, L)
+                return (l1_idx, l2_idx)
+            end
+        end
+    end
+
+    return (nothing, nothing)
+end
+
+"""
+    cliffords_equal(C1::CliffordOperator, C2::CliffordOperator) -> Bool
+
+Check if two Clifford operators are equal by comparing their matrix representations.
+Two Cliffords are equal if their matrices are equal up to global phase.
+"""
+function cliffords_equal(C1::CliffordOperator, C2::CliffordOperator)::Bool
+    n = nqubits(C1)
+    nqubits(C2) == n || return false
+
+    # Compare matrix representations (up to global phase)
+    U1 = clifford_to_matrix(C1)
+    U2 = clifford_to_matrix(C2)
+
+    return is_equivalent_up_to_phase(U1, U2)
+end
+
+"""
+    make_single_x(n::Int, q::Int) -> PauliOperator
+
+Create X on qubit q in an n-qubit system.
+"""
+function make_single_x(n::Int, q::Int)::PauliOperator
+    return make_single_pauli(n, q, :X)
+end
+
+"""
+    make_single_z(n::Int, q::Int) -> PauliOperator
+
+Create Z on qubit q in an n-qubit system.
+"""
+function make_single_z(n::Int, q::Int)::PauliOperator
+    return make_single_pauli(n, q, :Z)
+end
+
+"""
+    make_single_pauli(n::Int, q::Int, p::Symbol) -> PauliOperator
+
+Create a single-qubit Pauli operator in an n-qubit system.
+"""
+function make_single_pauli(n::Int, q::Int, p::Symbol)::PauliOperator
+    xs = falses(n)
+    zs = falses(n)
+
+    if p == :X
+        xs[q] = true
+    elseif p == :Y
+        xs[q] = true
+        zs[q] = true
+    elseif p == :Z
+        zs[q] = true
+    end
+
+    return PauliOperator(0x00, xs, zs)
+end
+
+"""
+    resolve_single_qubit_clifford_local(index::Int, qubit::Int) -> Vector
+
+Resolve single-qubit Clifford to gates on local qubit index (1 or 2).
+"""
+function resolve_single_qubit_clifford_local(index::Int, qubit::Int)::Vector
+    specs = generate_single_qubit_clifford(index, qubit)
+    return [resolve_symbolic_gate(spec) for spec in specs]
+end
+
+"""
+    remap_gates(gates::Vector, q1::Int, q2::Int) -> Vector
+
+Remap gates from local indices (1, 2) to actual qubit indices (q1, q2).
+"""
+function remap_gates(gates::Vector, q1::Int, q2::Int)::Vector
+    result = []
+
+    for g in gates
+        push!(result, remap_gate(g, q1, q2))
+    end
+
+    return result
+end
+
+"""
+    remap_gate(g, q1::Int, q2::Int)
+
+Remap a single gate from local indices to actual indices.
+"""
+function remap_gate(g, q1::Int, q2::Int)
+    # Handle different gate types
+    if g isa typeof(sHadamard(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sHadamard(new_target)
+    elseif g isa typeof(sPhase(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sPhase(new_target)
+    elseif g isa typeof(sCNOT(1, 2))
+        ctrl = g.q1
+        targ = g.q2
+        new_ctrl = ctrl == 1 ? q1 : q2
+        new_targ = targ == 1 ? q1 : q2
+        return sCNOT(new_ctrl, new_targ)
+    elseif g isa typeof(sCPHASE(1, 2))
+        q1_local = g.q1
+        q2_local = g.q2
+        new_q1 = q1_local == 1 ? q1 : q2
+        new_q2 = q2_local == 1 ? q1 : q2
+        return sCPHASE(new_q1, new_q2)
+    elseif g isa typeof(sSWAP(1, 2))
+        return sSWAP(q1, q2)
+    elseif g isa typeof(sX(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sX(new_target)
+    elseif g isa typeof(sY(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sY(new_target)
+    elseif g isa typeof(sZ(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sZ(new_target)
+    elseif g isa typeof(sInvPhase(1))
+        target = g.q
+        new_target = target == 1 ? q1 : q2
+        return sInvPhase(new_target)
+    else
+        # For other gate types, try to access qubit field directly
+        @warn "Unknown gate type in remap: $(typeof(g)), returning as-is"
+        return g
+    end
+end
+
+"""
+    remap_decomposition(decomp::Vector, q1::Int, q2::Int) -> Vector
+
+Remap a cached decomposition to the actual qubit indices.
+"""
+function remap_decomposition(decomp::Vector, q1::Int, q2::Int)::Vector
+    return remap_gates(decomp, q1, q2)
+end
+
+"""
+    synthesize_clifford_from_matrix(C::CliffordOperator, q1::Int, q2::Int) -> Vector
+
+Synthesize a Clifford decomposition using matrix-based approach as fallback.
+"""
+function synthesize_clifford_from_matrix(C::CliffordOperator, q1::Int, q2::Int)::Vector
     # Get the matrix representation
     U = clifford_to_matrix(C)
 
-    # Check for common cases
+    # Common matrices for quick lookup
     I4 = Matrix{ComplexF64}(LinearAlgebra.I, 4, 4)
 
-    # Identity
-    if isapprox(U, I4, atol=1e-10)
+    # Check for identity (allowing global phase)
+    if is_equivalent_up_to_phase(U, I4)
         return []
     end
 
     # CNOT(1,2)
     CNOT_12 = ComplexF64[1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0]
-    if isapprox(U, CNOT_12, atol=1e-10)
+    if is_equivalent_up_to_phase(U, CNOT_12)
         return [sCNOT(q1, q2)]
     end
 
     # CNOT(2,1)
     CNOT_21 = ComplexF64[1 0 0 0; 0 0 0 1; 0 0 1 0; 0 1 0 0]
-    if isapprox(U, CNOT_21, atol=1e-10)
+    if is_equivalent_up_to_phase(U, CNOT_21)
         return [sCNOT(q2, q1)]
     end
 
     # CZ
     CZ_mat = ComplexF64[1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 -1]
-    if isapprox(U, CZ_mat, atol=1e-10)
+    if is_equivalent_up_to_phase(U, CZ_mat)
         return [sCPHASE(q1, q2)]
     end
 
     # SWAP
     SWAP_mat = ComplexF64[1 0 0 0; 0 0 1 0; 0 1 0 0; 0 0 0 1]
-    if isapprox(U, SWAP_mat, atol=1e-10)
+    if is_equivalent_up_to_phase(U, SWAP_mat)
         return [sSWAP(q1, q2)]
     end
 
-    # For other cases, use the canonical decomposition
-    # Any two-qubit Clifford = (V1 ⊗ V2) · E · (W1 ⊗ W2)
-    # where E ∈ {I, CNOT, iSWAP, SWAP} and V, W are single-qubit Cliffords
+    # If we get here, use full brute force search (expensive but guaranteed)
+    return brute_force_decomposition(C, q1, q2)
+end
 
-    # Use brute-force search over (24×24×4) = 2304 combinations
-    entangling_gates = [
+"""
+    is_equivalent_up_to_phase(U1::Matrix, U2::Matrix) -> Bool
+
+Check if two unitary matrices are equal up to a global phase.
+"""
+function is_equivalent_up_to_phase(U1::Matrix, U2::Matrix)::Bool
+    # Find first non-zero element in U1
+    phase_idx = findfirst(x -> abs(x) > 1e-10, U1)
+    if phase_idx === nothing
+        return all(abs.(U2) .< 1e-10)
+    end
+
+    # Get the phase difference
+    if abs(U2[phase_idx]) < 1e-10
+        return false
+    end
+
+    phase = U1[phase_idx] / U2[phase_idx]
+
+    # Check if U1 ≈ phase * U2
+    return isapprox(U1, phase * U2, atol=1e-10)
+end
+
+"""
+    brute_force_decomposition(C::CliffordOperator, q1::Int, q2::Int) -> Vector
+
+Brute-force search over all canonical decompositions.
+Guaranteed to find a decomposition for any valid 2-qubit Clifford.
+"""
+function brute_force_decomposition(C::CliffordOperator, q1::Int, q2::Int)::Vector
+    # Entangling gate classes
+    entangling_classes = [
         [],
-        [sCNOT(q1, q2)],
-        [sCNOT(q2, q1)],
-        [sCPHASE(q1, q2)],
-        [sSWAP(q1, q2)],
-        [sCNOT(q1, q2), sCNOT(q2, q1)],
-        [sCNOT(q2, q1), sCNOT(q1, q2)],
+        [sCNOT(1, 2)],
+        [sCNOT(2, 1)],
+        [sCPHASE(1, 2)],
+        [sSWAP(1, 2)],
+        [sCNOT(1, 2), sCNOT(2, 1)],
+        [sCNOT(2, 1), sCNOT(1, 2)],
+        [sCNOT(1, 2), sCNOT(2, 1), sCNOT(1, 2)],
+        [sCNOT(2, 1), sCNOT(1, 2), sCNOT(2, 1)],
     ]
 
-    for left1_idx in 1:24
-        for left2_idx in 1:24
-            for entangling in entangling_gates
-                for right1_idx in 1:24
-                    for right2_idx in 1:24
-                        # Build gate sequence
-                        test_gates = vcat(
-                            resolve_single_qubit_clifford(right1_idx, q1),
-                            resolve_single_qubit_clifford(right2_idx, q2),
-                            entangling,
-                            resolve_single_qubit_clifford(left1_idx, q1),
-                            resolve_single_qubit_clifford(left2_idx, q2)
-                        )
+    for entangling in entangling_classes
+        for l1_idx in 1:24
+            for l2_idx in 1:24
+                for r1_idx in 1:24
+                    for r2_idx in 1:24
+                        # Build candidate Clifford
+                        cand_dest = one(Destabilizer, 2)
 
-                        # Compute the matrix
-                        test_D = one(Destabilizer, max(q1, q2))
-                        for g in test_gates
-                            apply!(test_D, g)
+                        # Apply R1 ⊗ R2
+                        for g in resolve_single_qubit_clifford_local(r1_idx, 1)
+                            apply!(cand_dest, g)
                         end
-                        test_C = CliffordOperator(test_D)
+                        for g in resolve_single_qubit_clifford_local(r2_idx, 2)
+                            apply!(cand_dest, g)
+                        end
 
-                        # Extract 2-qubit submatrix and compare
-                        # This is approximate - proper implementation would
-                        # compare stabilizer tableaux directly
+                        # Apply entangling gates
+                        for g in entangling
+                            apply!(cand_dest, g)
+                        end
 
-                        # For now, return a reasonable decomposition
-                        # The full brute force is expensive; in practice,
-                        # use precomputed decompositions
+                        # Apply L1 ⊗ L2
+                        for g in resolve_single_qubit_clifford_local(l1_idx, 1)
+                            apply!(cand_dest, g)
+                        end
+                        for g in resolve_single_qubit_clifford_local(l2_idx, 2)
+                            apply!(cand_dest, g)
+                        end
 
-                        # Skip this heavy search in favor of approximate approach
+                        cand = CliffordOperator(cand_dest)
+
+                        if cliffords_equal(C, cand)
+                            # Found it! Build the gate sequence
+                            gates = Vector{Any}()
+                            append!(gates, resolve_single_qubit_clifford_local(r1_idx, 1))
+                            append!(gates, resolve_single_qubit_clifford_local(r2_idx, 2))
+                            append!(gates, entangling)
+                            append!(gates, resolve_single_qubit_clifford_local(l1_idx, 1))
+                            append!(gates, resolve_single_qubit_clifford_local(l2_idx, 2))
+
+                            return remap_gates(gates, q1, q2)
+                        end
                     end
                 end
             end
         end
     end
 
-    # Fallback: return identity (no transformation)
-    # In practice, we'd use a proper decomposition library
-    @warn "Could not decompose Clifford, using identity"
+    # This should never happen for a valid 2-qubit Clifford
+    @warn "Could not decompose Clifford - this may indicate a bug"
     return []
 end
+
+# Global cache for decompositions (built lazily)
+const TWO_QUBIT_CLIFFORD_DECOMPOSITION_CACHE = Dict{CliffordOperator, Vector}()
 
 #==============================================================================#
 # FULL OBD ALGORITHM
