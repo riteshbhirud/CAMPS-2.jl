@@ -253,10 +253,10 @@ Convert a CliffordOperator to its 2^n × 2^n unitary matrix representation.
 - `Matrix{ComplexF64}`: Unitary matrix
 
 # Algorithm
-Uses the destabilizer formalism to extract the exact unitary matrix.
-The Clifford is applied to each computational basis state represented
-as a Destabilizer, and the resulting state is extracted using the
-CH-form conversion.
+For each computational basis state |j⟩, compute C|j⟩ by:
+1. Express |j⟩ as X^j |0⟩ where X^j applies X to qubits with bit=1
+2. Use C X^j C† = P̃^j (conjugated Pauli) to get C|j⟩ = P̃^j C|0⟩
+3. C|0⟩ is computed from the stabilizer structure
 
 # Note
 For n qubits, this creates a 2^n × 2^n matrix, which is exponential.
@@ -266,16 +266,308 @@ function clifford_to_matrix(C::CliffordOperator)::Matrix{ComplexF64}
     n = nqubits(C)
     dim = 2^n
 
-    # Build matrix column by column using destabilizer formalism
+    if n > 12
+        throw(ArgumentError("clifford_to_matrix only supports n ≤ 12"))
+    end
+
+    # Build the unitary matrix by computing C|j⟩ for each basis state j
+    # We use a hybrid approach:
+    # 1. For column 0 (C|0⟩), use destabilizer_to_statevector (works correctly)
+    # 2. For other columns, use the conjugated-X formula with proper phase tracking
+
     U = zeros(ComplexF64, dim, dim)
 
-    for j in 0:(dim-1)
-        # Create computational basis state |j⟩ as a Destabilizer
-        col = clifford_on_basis_state_destab(C, j, n)
+    # Column 0: C|0⟩
+    D0 = one(Destabilizer, n)
+    apply!(D0, C)
+    col0 = destabilizer_to_statevector(D0)
+    U[:, 1] = col0
+
+    # For columns j > 0: C|j⟩ = C X_{bits} |0⟩ = (C X_k1 C†)(C X_k2 C†)... C|0⟩
+    # The key is to track phases properly when applying conjugated X operators
+
+    for j in 1:(dim-1)
+        col = copy(col0)
+
+        # For each bit set in j, apply the conjugated X operator
+        # Use little-endian: bit k corresponds to qubit (k+1)
+        for bit in 0:(n-1)
+            if (j >> bit) & 1 == 1
+                qubit = bit + 1  # little-endian: bit 0 → qubit 1
+
+                # Compute C X_qubit C†
+                X_q = single_x(n, qubit)
+                stab = Stabilizer([X_q])
+                apply!(stab, C)
+                P = stab[1]
+
+                # Apply P to col with correct phase
+                # The phase includes: generator phase + Y phase from P acting on states
+                apply_pauli_to_statevector_with_y_phase!(col, P, n)
+            end
+        end
+
         U[:, j+1] = col
     end
 
     return U
+end
+
+"""
+    apply_pauli_to_statevector_with_y_phase!(psi::Vector{ComplexF64}, P::PauliOperator, n::Int)
+
+Apply Pauli operator P to state vector psi in-place, correctly handling Y = iXZ phase.
+
+For each basis state |j⟩ with amplitude ψ_j:
+P|j⟩ = (generator_phase) × (Y_phase) × (Z_phase) × |j ⊕ x_P⟩
+
+where:
+- generator_phase: i^{P.phase[]}
+- Y_phase: i for each qubit with Y (X=1, Z=1)
+- Z_phase: (-1)^{z·j} where z is Z-pattern and j is basis state
+"""
+function apply_pauli_to_statevector_with_y_phase!(psi::Vector{ComplexF64}, P::PauliOperator, n::Int)
+    dim = 2^n
+    psi_new = zeros(ComplexF64, dim)
+
+    for j in 0:(dim-1)
+        if abs(psi[j+1]) < 1e-15
+            continue
+        end
+
+        # Compute x_P (X pattern) and phases
+        # Use little-endian: qubit q corresponds to bit (q-1)
+        x_P = 0
+        z_phase_count = 0
+        y_phase_count = 0
+
+        for q in 1:n
+            x_q, z_q = P[q]
+            if x_q
+                x_P |= 1 << (q - 1)  # little-endian: qubit q → bit (q-1)
+            end
+            if z_q
+                j_q = (j >> (q - 1)) & 1  # little-endian
+                if j_q == 1
+                    z_phase_count += 1
+                end
+            end
+            if x_q && z_q  # Y component
+                y_phase_count += 1
+            end
+        end
+
+        # Total phase: generator + Z + Y
+        # Generator phase is in i^k where k = P.phase[]
+        # Z phase is (-1)^count = i^{2*count}
+        # Y phase is i^count
+        total_phase_power = (P.phase[] + 2 * z_phase_count + y_phase_count) % 4
+
+        phase = if total_phase_power == 0
+            1.0 + 0.0im
+        elseif total_phase_power == 1
+            0.0 + 1.0im
+        elseif total_phase_power == 2
+            -1.0 + 0.0im
+        else
+            0.0 - 1.0im
+        end
+
+        j_new = j ⊻ x_P
+        psi_new[j_new + 1] = phase * psi[j + 1]
+    end
+
+    psi .= psi_new
+end
+
+"""
+    destabilizer_to_statevector_with_phase(D::Destabilizer, C::CliffordOperator, input_j::Int, n::Int)
+
+Compute the state vector for C|j⟩ with proper phase tracking.
+
+The destabilizer D represents the state C|j⟩, but may have lost global phase.
+We recover the correct phases by tracking how the Clifford acts on X operators.
+"""
+function destabilizer_to_statevector_with_phase(D::Destabilizer, C::CliffordOperator, input_j::Int, n::Int)::Vector{ComplexF64}
+    dim = 2^n
+
+    # Check if C is a diagonal Clifford (maps computational basis to itself)
+    # A Clifford is diagonal if C X_k C† has X component only on qubit k
+    # (i.e., X_k → ±Y_k or ±X_k, not X_k → something involving other qubits)
+
+    is_diagonal = true
+    for k in 1:n
+        X_k = single_x(n, k)
+        stab_x = Stabilizer([X_k])
+        apply!(stab_x, C)
+        P = stab_x[1]
+
+        # Check that P has X only on qubit k
+        for q in 1:n
+            x_q, _ = P[q]
+            if x_q && q != k
+                is_diagonal = false
+                break
+            end
+        end
+        if !is_diagonal
+            break
+        end
+    end
+
+    if is_diagonal
+        # For diagonal Cliffords, the basis state is unchanged, but phase changes
+        # The phase for |j⟩ → e^{iθ_j}|j⟩ can be computed from how C transforms X operators
+
+        # C X_k C† tells us how phase changes when qubit k is |1⟩
+        # For S gate: S X S† = Y, so when qubit is |1⟩, we pick up phase i
+
+        # Compute phase correction for this basis state
+        phase_power = 0
+        for bit in 0:(n-1)
+            if (input_j >> bit) & 1 == 1
+                qubit = n - bit
+                # See how C transforms X on this qubit
+                X_q = single_x(n, qubit)
+                stab_x = Stabilizer([X_q])
+                apply!(stab_x, C)
+                P = stab_x[1]
+
+                # Count Y components to determine phase
+                for q in 1:n
+                    x_q, z_q = P[q]
+                    if x_q && z_q  # Y component
+                        phase_power += 1
+                    end
+                end
+
+                # Also account for the generator phase of the transformed Pauli
+                phase_power += P.phase[]
+            end
+        end
+
+        phase_power = phase_power % 4
+        phase_correction = if phase_power == 0
+            1.0 + 0.0im
+        elseif phase_power == 1
+            0.0 + 1.0im
+        elseif phase_power == 2
+            -1.0 + 0.0im
+        else
+            0.0 - 1.0im
+        end
+
+        # For diagonal Cliffords, output state is same basis state with phase
+        result = zeros(ComplexF64, dim)
+        result[input_j + 1] = phase_correction
+        return result
+    end
+
+    # For non-diagonal Cliffords, use destabilizer_to_statevector
+    # which correctly identifies which basis states have nonzero amplitudes
+    return destabilizer_to_statevector(D)
+end
+
+"""
+    clifford_on_zero_state(C::CliffordOperator, n::Int) -> Vector{ComplexF64}
+
+Compute C|0...0⟩ for a Clifford operator.
+
+The result is a stabilizer state, which we convert to a state vector.
+"""
+function clifford_on_zero_state(C::CliffordOperator, n::Int)::Vector{ComplexF64}
+    # Apply C to |0...0⟩ represented as a Destabilizer
+    D = one(Destabilizer, n)
+    apply!(D, C)
+
+    # Convert to state vector
+    return destabilizer_to_statevector(D)
+end
+
+"""
+    apply_conjugated_x!(psi::Vector{ComplexF64}, C::CliffordOperator, qubit::Int, n::Int)
+
+Apply the operator C X_qubit C† to state vector psi (in-place).
+
+C X_qubit C† is a Pauli operator (since Cliffords map Paulis to Paulis).
+We compute it and apply it to psi.
+"""
+function apply_conjugated_x!(psi::Vector{ComplexF64}, C::CliffordOperator, qubit::Int, n::Int)
+    # Compute C X_qubit C†
+    # Create X on the specified qubit
+    X_q = single_x(n, qubit)
+
+    # Conjugate by C: wrap in Stabilizer and apply C
+    # apply!(stab, C) computes C · X · C†
+    stab = Stabilizer([X_q])
+    apply!(stab, C)  # C · X · C†
+
+    # Extract the conjugated Pauli
+    P_conj = stab[1]
+
+    # Apply this Pauli to the state vector
+    apply_pauli_to_statevector!(psi, P_conj, n)
+end
+
+"""
+    apply_pauli_to_statevector!(psi::Vector{ComplexF64}, P::PauliOperator, n::Int)
+
+Apply Pauli operator P to state vector psi (in-place).
+
+P = i^p X^a Z^b where p is the phase, a is the X-pattern, b is the Z-pattern.
+"""
+function apply_pauli_to_statevector!(psi::Vector{ComplexF64}, P::PauliOperator, n::Int)
+    dim = 2^n
+
+    # Extract phase
+    phase_power = P.phase[]
+    global_phase = if phase_power == 0
+        1.0 + 0.0im
+    elseif phase_power == 1
+        0.0 + 1.0im
+    elseif phase_power == 2
+        -1.0 + 0.0im
+    else  # phase_power == 3
+        0.0 - 1.0im
+    end
+
+    # Extract X and Z patterns
+    x_bits = zeros(Int, n)
+    z_bits = zeros(Int, n)
+    for q in 1:n
+        x_q, z_q = P[q]
+        x_bits[q] = x_q ? 1 : 0
+        z_bits[q] = z_q ? 1 : 0
+    end
+
+    # P|j⟩ = global_phase * (-1)^{z·j} |j ⊕ x⟩
+    # where z·j is the dot product of z_bits with j_bits
+
+    new_psi = zeros(ComplexF64, dim)
+
+    for j in 0:(dim-1)
+        # Extract j's bits (little-endian: qubit q corresponds to bit q-1)
+        j_bits = [(j >> (q - 1)) & 1 for q in 1:n]
+
+        # Compute z · j
+        z_dot_j = 0
+        for q in 1:n
+            z_dot_j += z_bits[q] * j_bits[q]
+        end
+        z_phase = (z_dot_j % 2 == 0) ? 1.0 : -1.0
+
+        # Compute j ⊕ x (the output index)
+        out_bits = [j_bits[q] ⊻ x_bits[q] for q in 1:n]
+        out_idx = 0
+        for q in 1:n
+            out_idx += out_bits[q] * (1 << (q - 1))  # little-endian
+        end
+
+        # new_psi[out_idx] = global_phase * z_phase * psi[j]
+        new_psi[out_idx + 1] += global_phase * z_phase * psi[j + 1]
+    end
+
+    psi .= new_psi
 end
 
 """
@@ -305,8 +597,7 @@ This means:
 - j=2: |00..10⟩ (qubit n-1 is |1⟩)
 etc.
 
-For matrix indices to match standard conventions where CNOT flips the target
-when control is |1⟩, we use: bit k of j corresponds to qubit (n-k).
+We use little-endian: bit k of j corresponds to qubit (k+1).
 """
 function clifford_on_basis_state_destab(C::CliffordOperator, j::Int, n::Int)::Vector{ComplexF64}
     dim = 2^n
@@ -315,13 +606,11 @@ function clifford_on_basis_state_destab(C::CliffordOperator, j::Int, n::Int)::Ve
     D = one(Destabilizer, n)
 
     # Apply X gates to create |j⟩ from |0...0⟩
-    # Use big-endian: bit k (from right, 0-indexed) corresponds to qubit (n - k)
-    # j = b_{n-1} * 2^{n-1} + ... + b_1 * 2^1 + b_0 * 2^0
-    # bit k = b_k corresponds to qubit (n - k) in our convention
+    # Use little-endian: bit k (0-indexed) corresponds to qubit (k + 1)
     for k in 0:(n-1)
         if (j >> k) & 1 == 1
-            # bit k is set, so qubit (n - k) should be |1⟩
-            apply!(D, sX(n - k))
+            # bit k is set, so qubit (k + 1) should be |1⟩
+            apply!(D, sX(k + 1))
         end
     end
 
@@ -365,72 +654,166 @@ function destabilizer_to_statevector(D::Destabilizer)::Vector{ComplexF64}
         throw(ArgumentError("destabilizer_to_statevector only supports n ≤ 12"))
     end
 
-    # Use the direct algorithm: build the state by applying the Clifford
-    # to the all-zeros state using explicit matrix construction
-    #
-    # This is equivalent to computing C|0⟩^n where C is the Clifford
-    # represented by the destabilizer D.
-    #
-    # However, the destabilizer D directly represents a stabilizer state,
-    # so we need to extract it properly.
-
-    # Alternative approach: Use the generating set interpretation
-    # The stabilizer state can be computed as:
-    # |ψ⟩ = (1/√K) Σ_{s∈S_X} ω_s |s⟩
-    # where S_X is determined by the X-support of stabilizers
-
     stab = stabilizerview(D)
-    destabs = destabilizerview(D)
 
-    # Find qubits where all stabilizers have Z-only action (no X)
-    # These determine which bits are fixed in the support
+    # Algorithm: Find basis states in the stabilizer code space by enumeration
+    # For each basis state |j⟩, check if S_i|j⟩ = ±|j⟩ matches the stabilizer phase
+    # States with X components in stabilizers can have multiple basis states
 
-    # First, find the X-support matrix of the stabilizers
-    # This tells us which basis states can have non-zero amplitude
-    x_support = zeros(Bool, n, n)  # x_support[i,q] = true if S_i has X on qubit q
-    z_support = zeros(Bool, n, n)
+    psi = zeros(ComplexF64, dim)
 
-    for i in 1:n
-        S = stab[i]
-        for q in 1:n
-            x_q, z_q = S[q]
-            x_support[i, q] = x_q
-            z_support[i, q] = z_q
+    # First, find which basis states are eigenstates of all stabilizers
+    # and track their eigenvalues
+    for j in 0:(dim-1)
+        is_eigenstate = true
+        total_phase = 1.0 + 0.0im
+
+        for i in 1:n
+            S = stab[i]
+            gen_phase = S.phase[]  # 0 = +1, 2 = -1
+
+            # Check if |j⟩ is an eigenstate of the Pauli part of S
+            # and compute the eigenvalue
+            x_pattern = 0
+            has_x = false
+            z_eigenval = 1
+
+            for q in 1:n
+                x_q, z_q = S[q]
+                if x_q
+                    has_x = true
+                    x_pattern |= 1 << (q - 1)  # little-endian
+                end
+                if z_q
+                    j_q = (j >> (q - 1)) & 1  # little-endian
+                    if j_q == 1
+                        z_eigenval *= -1
+                    end
+                end
+            end
+
+            if has_x
+                # S has X component, so |j⟩ is only an eigenstate if
+                # j ⊕ x_pattern = j, which means x_pattern = 0
+                # But x_pattern ≠ 0, so |j⟩ is not an eigenstate
+                # unless this is an entangled state situation
+                is_eigenstate = false
+                break
+            else
+                # Pure Z stabilizer: eigenvalue is z_eigenval
+                # Check if it matches the expected sign from gen_phase
+                expected_eigenval = gen_phase == 0 ? 1 : -1
+                if z_eigenval != expected_eigenval
+                    is_eigenstate = false
+                    break
+                end
+            end
+        end
+
+        if is_eigenstate
+            psi[j + 1] = 1.0
         end
     end
 
-    # Find the row echelon form of the X-support matrix
-    # to identify free qubits and fixed relationships
-    result = zeros(ComplexF64, dim)
+    # Check if we found any eigenstates
+    norm_val = norm(psi)
+    if norm_val > 1e-15
+        psi ./= norm_val
+        return psi
+    end
 
-    # Simpler approach for correctness: enumerate all basis states and
-    # check stabilizer constraints using the proper Aaronson-Gottesman
-    # inner product formula
+    # If no pure Z eigenstates found, this is an entangled state
+    # Use the destabilizer-based algorithm
+    # Find a computational basis state in the code by examining destabilizers
 
-    # For a stabilizer state, ⟨j|ψ⟩ ≠ 0 iff for all generators S_i:
-    # the X-part of S_i dotted with j equals 0 (mod 2), OR
-    # the stabilizer creates a valid pairing
+    # For entangled states, use a different approach:
+    # Start from a "seed" state and apply (I + S)/2 projectors
+    # The seed should be found using the destabilizers
 
-    # Actually, the simplest correct approach is:
-    # 1. Find a basis for the code space (2^k states for [[n,k]] code)
-    # 2. Compute phases from destabilizer structure
+    # Algorithm from Aaronson-Gottesman:
+    # 1. Use destabilizers to identify a basis state in the code
+    # 2. Apply stabilizers to find all basis states and their phases
 
-    # For a stabilizer state (k=0 logical qubits), there are 2^r
-    # computational basis states in the support, where r = rank of X-matrix
+    destab = destabilizerview(D)
 
-    # Use brute-force for small n: check each basis state
-    for j in 0:(dim-1)
-        amp = stabilizer_state_amplitude(D, j, n)
-        result[j+1] = amp
+    # Find the "graph" of basis states connected by X operators in stabilizers
+    # For the Bell state (+XX, +ZZ), both |00⟩ and |11⟩ are in the code
+
+    # Simpler approach: enumerate and check all basis states
+    # For each state, apply all stabilizers and see if it maps back to code space
+
+    # Even simpler: Use the projector method but start from a superposition
+    # that spans the code space
+
+    # Actually, the correct approach for entangled states:
+    # Initialize all amplitudes, then iteratively project
+
+    # Reset and try uniform superposition
+    psi = ones(ComplexF64, dim) / sqrt(dim)
+
+    for i in 1:n
+        S = stab[i]
+        gen_phase = S.phase[]
+
+        # Apply projector (I + S)/2 or (I - |S|)/2
+        psi_new = zeros(ComplexF64, dim)
+
+        for j in 0:(dim-1)
+            if abs(psi[j+1]) < 1e-15
+                continue
+            end
+
+            # Add the identity part
+            psi_new[j + 1] += psi[j + 1]
+
+            # Compute S|j⟩ (including generator phase)
+            x_S = 0
+            z_phase_count = 0
+            y_phase_count = 0
+
+            for q in 1:n
+                x_q, z_q = S[q]
+                if x_q
+                    x_S |= 1 << (q - 1)  # little-endian
+                end
+                if z_q
+                    j_q = (j >> (q - 1)) & 1  # little-endian
+                    if j_q == 1
+                        z_phase_count += 1
+                    end
+                end
+                if x_q && z_q
+                    y_phase_count += 1
+                end
+            end
+
+            # Total phase including generator phase
+            total_phase_power = (gen_phase + 2 * z_phase_count + y_phase_count) % 4
+
+            phase = if total_phase_power == 0
+                1.0 + 0.0im
+            elseif total_phase_power == 1
+                0.0 + 1.0im
+            elseif total_phase_power == 2
+                -1.0 + 0.0im
+            else
+                0.0 - 1.0im
+            end
+
+            j_new = j ⊻ x_S
+            psi_new[j_new + 1] += phase * psi[j + 1]
+        end
+
+        psi = psi_new / 2
     end
 
     # Normalize
-    norm_sq = sum(abs2, result)
-    if norm_sq > 1e-15
-        result ./= sqrt(norm_sq)
+    norm_val = norm(psi)
+    if norm_val > 1e-15
+        psi ./= norm_val
     end
 
-    return result
+    return psi
 end
 
 """
@@ -438,182 +821,118 @@ end
 
 Compute ⟨j|ψ⟩ for stabilizer state |ψ⟩ represented by destabilizer D.
 
-Uses the correct algorithm based on the stabilizer formalism.
+Uses the correct algorithm based on the stabilizer formalism:
+|ψ⟩ = (1/2^n) Σ_{g ∈ G} g |0...0⟩
 
-# Algorithm
-A stabilizer state is:
-|ψ⟩ = (1/√|C|) Σ_{c∈C} ω_c |c⟩
+where G is the stabilizer group (all 2^n combinations of n generators).
 
-where C is the set of computational basis states in the support (determined
-by the X-parts of stabilizers), and ω_c are phases (determined by Z-parts
-and the destabilizer structure).
+For computational basis state |j⟩:
+⟨j|ψ⟩ = (1/2^n) Σ_{g: x(g)=j} phase(g)
 
-For a basis state |j⟩ to have non-zero amplitude:
-1. j must be in the affine subspace defined by Z-only stabilizers
-2. The phase comes from Z-eigenvalues and destabilizer phases
-
-# Key insight
-The stabilizers partition into:
-- Z-only stabilizers: constrain which j are in the support
-- Stabilizers with X-parts: define the superposition structure
-
-For the state |+0⟩ = (|00⟩ + |10⟩)/√2:
-- Stabilizers: X₁, Z₂
-- Z₂ constrains qubit 2 to be |0⟩
-- X₁ creates the superposition over qubit 1
+where x(g) is the X-part of g (determines which basis state g|0⟩ maps to).
 """
 function stabilizer_state_amplitude(D::Destabilizer, j::Int, n::Int)::ComplexF64
     stab = stabilizerview(D)
-    destabs = destabilizerview(D)
 
-    # Convert j to bit vector (big-endian convention: qubit 1 is MSB)
-    j_bits = [(j >> (n - q)) & 1 for q in 1:n]
+    # j's bits in little-endian (qubit q corresponds to bit q-1)
+    j_bits = [(j >> (q - 1)) & 1 for q in 1:n]
 
-    # Step 1: Check Z-only stabilizer constraints
-    # These constrain which basis states have non-zero amplitude
+    # Sum over all 2^n combinations of the n generators
+    # g = S_1^{a_1} S_2^{a_2} ... S_n^{a_n} for a_i ∈ {0,1}
+    total_phase = 0.0 + 0.0im
 
-    for i in 1:n
-        S = stab[i]
+    for mask in 0:(2^n - 1)
+        # Compute the X-pattern and phase for this group element
+        x_pattern = zeros(Int, n)
+        # Accumulate phase: starts at +1 (phase_power = 0)
+        phase_power = 0
 
-        # Check if this stabilizer has any X components
-        has_x = false
-        for q in 1:n
-            x_q, _ = S[q]
-            if x_q
-                has_x = true
-                break
-            end
-        end
+        # We multiply stabilizers in order, tracking anticommutation phases
+        # When P1 * P2 where they anticommute, we get an extra factor of i
 
-        if !has_x
-            # This is a Z-only stabilizer (product of Z and I only)
-            # Constraint: eigenvalue must be +1
+        # Build the product incrementally
+        # Track both X and Z parts to compute anticommutation
+        running_x = zeros(Int, n)
+        running_z = zeros(Int, n)
 
-            phase_i = S.phase[]
-            z_dot_j = 0
-            for q in 1:n
-                _, z_q = S[q]
-                if z_q
-                    z_dot_j ⊻= j_bits[q]
+        for i in 1:n
+            if (mask >> (i-1)) & 1 == 1
+                S = stab[i]
+
+                # Extract X and Z parts of S
+                s_x = zeros(Int, n)
+                s_z = zeros(Int, n)
+                for q in 1:n
+                    x_q, z_q = S[q]
+                    s_x[q] = x_q ? 1 : 0
+                    s_z[q] = z_q ? 1 : 0
                 end
-            end
 
-            # Eigenvalue = i^phase_i * (-1)^{z_dot_j}
-            # For +1 eigenspace, need phase_i + 2*z_dot_j ≡ 0 (mod 4)
-            effective_phase = (phase_i + 2 * z_dot_j) % 4
-            if effective_phase != 0
-                return 0.0 + 0.0im
-            end
-        end
-    end
+                # Compute anticommutation phase when multiplying running * S
+                # The phase from P1 * P2 is i^{2 * Σ_q (x1_q * z2_q)}
+                # when P1 = i^{p1} X^{a1} Z^{b1} and P2 = i^{p2} X^{a2} Z^{b2}
+                # Actually: P1 * P2 = i^{p1+p2} * (-1)^{a1·b2} * X^{a1⊕a2} Z^{b1⊕b2}
+                # The factor (-1)^{a1·b2} = i^{2*a1·b2}
+                anticommute_phase = 0
+                for q in 1:n
+                    anticommute_phase += running_x[q] * s_z[q]
+                end
+                phase_power += 2 * anticommute_phase
 
-    # Step 2: For stabilizers with X-components, check that j is in the
-    # correct coset. The X-parts of all stabilizers generate a group G_X.
-    # The support of |ψ⟩ is a coset of G_X.
+                # Add the generator's own phase
+                phase_power += S.phase[]
 
-    # Build the X-part matrix and find the coset representative
-    x_matrix = zeros(Int, n, n)  # x_matrix[i,q] = 1 if S_i has X on qubit q
-    for i in 1:n
-        S = stab[i]
-        for q in 1:n
-            x_q, _ = S[q]
-            x_matrix[i, q] = x_q ? 1 : 0
-        end
-    end
-
-    # Find which coset j belongs to by computing j mod G_X
-    # The coset must match the reference state (which is |0⟩^n for identity Clifford)
-
-    # For each stabilizer with X-part, check if j is in the +1 eigenspace
-    # This is done by checking all group relations
-
-    # The correct check: for each stabilizer S = X^a Z^b with phase p,
-    # if a ≠ 0, then both |j⟩ and |j⊕a⟩ have equal magnitude amplitudes
-    # with relative phase determined by b
-
-    # For a basis state to be in the support, it must be reachable from
-    # the "seed" state by applying X-parts of stabilizers
-
-    # Find the seed state: the lexicographically smallest state in the support
-    # by reducing j modulo the X-group
-
-    # Use Gaussian elimination on x_matrix to find the reduced form
-    reduced_j = copy(j_bits)
-    for i in 1:n
-        # Find pivot
-        pivot_q = 0
-        for q in 1:n
-            if x_matrix[i, q] == 1
-                pivot_q = q
-                break
-            end
-        end
-
-        if pivot_q > 0 && reduced_j[pivot_q] == 1
-            # Apply this stabilizer's X-part to reduce
-            for q in 1:n
-                if x_matrix[i, q] == 1
-                    reduced_j[q] ⊻= 1
+                # Update running product
+                for q in 1:n
+                    running_x[q] ⊻= s_x[q]
+                    running_z[q] ⊻= s_z[q]
                 end
             end
         end
-    end
 
-    # Check if the reduced form is the zero state (or the seed state)
-    # For identity Clifford starting from |0⟩^n, the seed is all zeros
+        # The X-pattern of the final product
+        x_pattern = running_x
 
-    # Actually, this approach is getting complicated. Let me use a simpler
-    # but correct approach: the state |ψ⟩ has the form:
-    # |ψ⟩ = (1/√|G|) Σ_{g∈G} phase(g) |seed ⊕ x(g)⟩
-    # where G is generated by stabilizers with X-parts
+        # Check if x_pattern matches j
+        if x_pattern == j_bits
+            # Need to account for:
+            # 1. The Z-part acting on |0...0⟩ - Z|0⟩ = |0⟩ (no phase needed)
+            # 2. The Y = iXZ convention - each qubit with both X=1 and Z=1 contributes i
+            #
+            # The formula for P|0...0⟩ where P is a Pauli string with X-part x and Z-part z:
+            # P|0...0⟩ = (phase_byte) × (i^{#Y}) × |x⟩
+            # where #Y is the count of qubits with both X=1 and Z=1.
+            #
+            # This is because:
+            # - Z|0⟩ = |0⟩ (eigenvalue +1)
+            # - X|0⟩ = |1⟩
+            # - Y|0⟩ = iXZ|0⟩ = iX|0⟩ = i|1⟩
 
-    # For |+0⟩: G is generated by X₁, seed is |00⟩
-    # Support = {|00⟩, |10⟩} with equal phases
+            # Count Y components (both X and Z set)
+            y_count = 0
+            for q in 1:n
+                if running_x[q] == 1 && running_z[q] == 1
+                    y_count += 1
+                end
+            end
+            phase_power += y_count
 
-    # Check if j is in the group orbit of |0...0⟩
-    is_in_support = is_in_stabilizer_support(x_matrix, j_bits, n)
-
-    if !is_in_support
-        return 0.0 + 0.0im
-    end
-
-    # Step 3: Compute the phase
-    # The phase comes from two sources:
-    # 1. Z-eigenvalues from stabilizers with Z-parts
-    # 2. Destabilizer phases
-
-    phase_power = 0
-
-    # Phase from Z-parts of stabilizers acting on j
-    # For each stabilizer S = i^p X^a Z^b, the contribution to |j⟩ is:
-    # If j is in the support and j = seed ⊕ Σ_i α_i x_i, then
-    # the phase picks up contributions from Z-parts
-
-    # Simpler: compute phase from destabilizer action
-    # |j⟩ = D_1^{j_1} D_2^{j_2} ... D_n^{j_n} |ψ_0⟩
-    # where |ψ_0⟩ is the "reference" state
-
-    for q in 1:n
-        if j_bits[q] == 1
-            d_q = destabs[q]
-            d_phase = d_q.phase[]
-            phase_power += d_phase
+            phase_power = phase_power % 4
+            phase_factor = if phase_power == 0
+                1.0 + 0.0im
+            elseif phase_power == 1
+                0.0 + 1.0im
+            elseif phase_power == 2
+                -1.0 + 0.0im
+            else  # phase_power == 3
+                0.0 - 1.0im
+            end
+            total_phase += phase_factor
         end
     end
 
-    phase_power = phase_power % 4
-
-    phase_factor = if phase_power == 0
-        1.0 + 0.0im
-    elseif phase_power == 1
-        0.0 + 1.0im
-    elseif phase_power == 2
-        -1.0 + 0.0im
-    else  # phase_power == 3
-        0.0 - 1.0im
-    end
-
-    return phase_factor
+    # Normalize by 2^n (the size of the stabilizer group)
+    return total_phase / (2^n)
 end
 
 """
@@ -774,7 +1093,7 @@ Returns:
 - 0 if P|j⟩ ≠ ±|j⟩ (has X component)
 
 # Basis convention
-Uses big-endian: bit k of j (0-indexed from right) corresponds to qubit (n - k).
+Uses little-endian: bit k of j (0-indexed) corresponds to qubit (k + 1).
 """
 function stabilizer_eigenvalue_on_basis(P::PauliOperator, j::Int, n::Int)::Int
     # Check for X components - if any X or Y, |j⟩ is not an eigenstate
@@ -792,8 +1111,8 @@ function stabilizer_eigenvalue_on_basis(P::PauliOperator, j::Int, n::Int)::Int
     for q in 1:n
         _, z_q = P[q]
         if z_q  # Z component on qubit q
-            # Qubit q corresponds to bit (n - q) in our big-endian convention
-            bit_idx = n - q
+            # Qubit q corresponds to bit (q - 1) in little-endian convention
+            bit_idx = q - 1
             bit_val = (j >> bit_idx) & 1
             if bit_val == 1
                 z_eigenval *= -1
@@ -832,7 +1151,7 @@ For computational basis states, we use the fact that:
 where N = 2^n / (# of basis states in support).
 
 # Basis convention
-Uses big-endian: bit k of j (0-indexed from right) corresponds to qubit (n - k).
+Uses little-endian: bit k of j (0-indexed from right) corresponds to qubit (k + 1).
 """
 function compute_amplitude_phase(D::Destabilizer, j::Int, n::Int)::ComplexF64
     # For stabilizer states, amplitudes are of the form ±1/√k or ±i/√k
@@ -844,9 +1163,9 @@ function compute_amplitude_phase(D::Destabilizer, j::Int, n::Int)::ComplexF64
     phase_power = 0  # Tracks i^phase_power
 
     # For each qubit, check if the corresponding bit in j is 1
-    # Use big-endian convention: qubit q corresponds to bit (n - q)
+    # Use little-endian convention: qubit q corresponds to bit (q - 1)
     for q in 1:n
-        bit_idx = n - q
+        bit_idx = q - 1
         bit_val = (j >> bit_idx) & 1
         if bit_val == 1
             # The contribution from destabilizer q when measuring |1⟩

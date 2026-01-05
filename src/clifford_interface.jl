@@ -182,32 +182,125 @@ end
 """
     apply_inverse_gates!(C::Destabilizer, gates::Vector) -> Destabilizer
 
-Apply the inverse of each gate in reverse order.
+Compute C_new = C · D† where D is the Clifford operator built from the gates.
 
-If gates = [g₁, g₂, g₃], this applies g₃⁻¹ · g₂⁻¹ · g₁⁻¹ to C.
-This is equivalent to applying (g₁ · g₂ · g₃)⁻¹.
+Used in OFD: after building disentangler D from controlled-Pauli gates,
+we need to right-multiply the accumulated Clifford by D†.
 
-Used in OFD: after building disentangler D = [d₁, d₂, ...], we need to
-apply D⁻¹ to the accumulated Clifford.
+# Theory (for OFD)
+When applying a non-Clifford rotation R_P(θ) to the CAMPS state |ψ⟩ = C|mps⟩:
+1. Twisted rotation identity: R_P(θ) C = C R_{P̃}(θ) where P̃ = C† P C
+2. Disentangler identity: R_{P̃}(θ) = D† R_σ(θ) D
+3. When control qubit is free (in |0⟩): D|mps⟩ = |mps⟩
+4. Therefore: R_P(θ)|ψ⟩ = (C · D†) R_σ(θ) |mps⟩
+
+So the new Clifford is C_new = C · D† (right multiplication).
 
 # Arguments
 - `C::Destabilizer`: Accumulated Clifford (modified in-place)
-- `gates::Vector`: Vector of QuantumClifford symbolic gates
+- `gates::Vector`: Vector of QuantumClifford symbolic gates defining D
 
 # Returns
-- `Destabilizer`: The modified Clifford
+- `Destabilizer`: The modified Clifford C · D†
 
 # Example
 ```julia
-# If D = [sCNOT(1,2), sCPHASE(1,3)], then:
-# apply_inverse_gates!(C, D) applies sCPHASE(1,3)⁻¹ · sCNOT(1,2)⁻¹
-# which equals (sCNOT(1,2) · sCPHASE(1,3))⁻¹ = D⁻¹
+# If D = [sCNOT(1,2), sPhase(3)], then:
+# C_new = C · D† = C · (sCNOT(1,2) · sPhase(3))†
 ```
 """
 function apply_inverse_gates!(C::Destabilizer, gates::Vector)::Destabilizer
-    for gate in reverse(gates)
-        apply!(C, inv(gate))
+    n = nqubits(C)
+
+    # Convert C to CliffordOperator for multiplication
+    C_op = CliffordOperator(C)
+
+    # Build D from gates
+    D = one(Destabilizer, n)
+    for gate in gates
+        apply!(D, gate)
     end
+    D_op = CliffordOperator(D)
+
+    # Compute D⁻¹ = D†
+    D_inv_op = inv(D_op)
+
+    # Compute C_new = C · D⁻¹ = C · D† (right multiplication by D†)
+    #
+    # Derivation for OFD:
+    # We want to apply R_P(θ) to state |ψ⟩ = C|mps⟩.
+    # Using the twisted rotation identity: R_P(θ) C = C R_{P̃}(θ)
+    # where P̃ = C† P C is the twisted Pauli.
+    #
+    # The disentangler identity gives: R_{P̃}(θ) = D† R_σ(θ) D
+    # where σ is the single-qubit Pauli on the control qubit.
+    #
+    # So: R_P(θ) C |mps⟩ = C R_{P̃}(θ) |mps⟩ = C D† R_σ(θ) D |mps⟩
+    #
+    # When the control qubit is "free" (in |0⟩), D|mps⟩ = |mps⟩ because
+    # D is built from controlled gates with control on that qubit.
+    #
+    # Therefore: R_P(θ) C |mps⟩ = C D† R_σ(θ) |mps⟩ = (C · D†) R_σ(θ) |mps⟩
+    #
+    # So C_new = C · D† (right multiplication by D†)
+    C_new_op = C_op * D_inv_op
+
+    # Convert back to Destabilizer by applying C_new to identity state
+    # The trick: apply the CliffordOperator to the |0...0⟩ destabilizer
+    # to get a destabilizer that represents C_new
+    #
+    # Actually, we need to extract the stabilizer/destabilizer generators
+    # from C_new_op. The CliffordOperator stores how X_i and Z_i transform,
+    # which defines the Destabilizer.
+
+    # For a Destabilizer D representing state |ψ⟩:
+    # - Stabilizers S_i satisfy S_i|ψ⟩ = |ψ⟩
+    # - Destabilizers D_i satisfy D_i|ψ⟩ orthogonal to |ψ⟩
+    #
+    # For a Clifford operator C representing unitary U:
+    # - C|0...0⟩ is a stabilizer state
+    # - The destabilizer of C|0...0⟩ has:
+    #   - Stabilizers: C(Z_i) (images of Z under conjugation by C)
+    #   - Destabilizers: C(X_i) (images of X under conjugation by C)
+
+    # Create the new destabilizer from C_new_op
+    # This is done by looking at how C_new_op transforms X and Z
+    C_new_destab = one(Destabilizer, n)
+
+    # Apply C_new_op as conjugation to identity destabilizer
+    # The identity destabilizer has:
+    # - Destabilizers: X_1, X_2, ..., X_n
+    # - Stabilizers: Z_1, Z_2, ..., Z_n
+    #
+    # After conjugation by C_new, we get:
+    # - Destabilizers: C_new(X_1), C_new(X_2), ..., C_new(X_n)
+    # - Stabilizers: C_new(Z_1), C_new(Z_2), ..., C_new(Z_n)
+
+    # Set the destabilizers and stabilizers from C_new_op
+    destab_view = destabilizerview(C_new_destab)
+    stab_view = stabilizerview(C_new_destab)
+
+    for i in 1:n
+        # Get the image of X_i under C_new_op
+        # We use apply!(Stabilizer, CliffordOperator) which computes C * P * C†
+        X_i = single_x(n, i)
+        X_i_stab = Stabilizer([X_i])
+        apply!(X_i_stab, C_new_op)
+        destab_view[i] = X_i_stab[1]
+
+        # Get the image of Z_i under C_new_op
+        Z_i = single_z(n, i)
+        Z_i_stab = Stabilizer([Z_i])
+        apply!(Z_i_stab, C_new_op)
+        stab_view[i] = Z_i_stab[1]
+    end
+
+    # Copy result back to C
+    for i in 1:n
+        destabilizerview(C)[i] = destab_view[i]
+        stabilizerview(C)[i] = stab_view[i]
+    end
+
     return C
 end
 

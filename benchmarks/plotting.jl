@@ -62,7 +62,9 @@ function setup_makie_theme()
         return
     end
 
-    set_theme!(
+    # Use Theme() constructor for Makie 0.22+ compatibility
+    # Note: Lines and Scatter theming removed as they cause Observable issues in Makie 0.22
+    theme = Theme(
         fontsize = FONT_SIZE,
         font = FONT_FAMILY,
         Axis = (
@@ -81,14 +83,9 @@ function setup_makie_theme()
             labelsize = FONT_SIZE - 1,
             framewidth = 0.5,
             padding = (5, 5, 3, 3)
-        ),
-        Lines = (
-            linewidth = 1.5
-        ),
-        Scatter = (
-            markersize = 8
         )
     )
+    set_theme!(theme)
 end
 
 """
@@ -342,18 +339,29 @@ function figure_scaling_analysis(results::Vector{ScalingDataPoint}; save_path=no
         y = [r.mean_time for r in clifford_data]
         yerr = [r.std_time for r in clifford_data]
 
-        errorbars!(ax_a, x, y, yerr, color = COLORS[:ofd], whiskerwidth = 5)
-        scatter!(ax_a, x, y, color = COLORS[:ofd], markersize = 8)
+        # Filter out non-positive values for log scale
+        valid_idx = findall(yi -> yi > 0, y)
+        if !isempty(valid_idx)
+            x, y, yerr = x[valid_idx], y[valid_idx], yerr[valid_idx]
+            # Clamp error bars to not go below a small positive value
+            yerr_clamped = [min(ye, yi - 1e-10) for (ye, yi) in zip(yerr, y)]
+            errorbars!(ax_a, x, y, yerr_clamped, color = COLORS[:ofd], whiskerwidth = 5)
+            scatter!(ax_a, x, y, color = COLORS[:ofd], markersize = 8)
 
-        # Fit and plot power law
-        a, b = fit_power_law_simple(x, y)
-        if !isnan(b)
-            x_fit = range(minimum(x), maximum(x), length=50)
-            y_fit = a .* x_fit.^b
-            lines!(ax_a, collect(x_fit), y_fit,
-                   color = :gray, linestyle = :dash,
-                   label = @sprintf("∝ n^{%.1f}", b))
-            axislegend(ax_a, position = :lt)
+            # Fit and plot power law
+            a, b = fit_power_law_simple(x, y)
+            if !isnan(b)
+                x_fit = range(minimum(x), maximum(x), length=50)
+                y_fit = a .* x_fit.^b
+                # Filter out non-positive fit values for log scale
+                valid_fit = y_fit .> 0
+                if any(valid_fit)
+                    lines!(ax_a, collect(x_fit)[valid_fit], y_fit[valid_fit],
+                           color = :gray, linestyle = :dash,
+                           label = @sprintf("∝ n^{%.1f}", b))
+                    axislegend(ax_a, position = :lt)
+                end
+            end
         end
     end
 
@@ -372,17 +380,28 @@ function figure_scaling_analysis(results::Vector{ScalingDataPoint}; save_path=no
         y = [r.mean_time for r in ofd_data]
         yerr = [r.std_time for r in ofd_data]
 
-        errorbars!(ax_b, x, y, yerr, color = COLORS[:ofd], whiskerwidth = 5)
-        scatter!(ax_b, x, y, color = COLORS[:ofd], markersize = 8)
+        # Filter out non-positive values for log scale
+        valid_idx = findall(yi -> yi > 0, y)
+        if !isempty(valid_idx)
+            x, y, yerr = x[valid_idx], y[valid_idx], yerr[valid_idx]
+            # Clamp error bars to not go below a small positive value
+            yerr_clamped = [min(ye, yi - 1e-10) for (ye, yi) in zip(yerr, y)]
+            errorbars!(ax_b, x, y, yerr_clamped, color = COLORS[:ofd], whiskerwidth = 5)
+            scatter!(ax_b, x, y, color = COLORS[:ofd], markersize = 8)
 
-        a, b = fit_power_law_simple(x, y)
-        if !isnan(b)
-            x_fit = range(minimum(x), maximum(x), length=50)
-            y_fit = a .* x_fit.^b
-            lines!(ax_b, collect(x_fit), y_fit,
-                   color = :gray, linestyle = :dash,
-                   label = @sprintf("∝ n^{%.1f}", b))
-            axislegend(ax_b, position = :lt)
+            a, b = fit_power_law_simple(x, y)
+            if !isnan(b)
+                x_fit = range(minimum(x), maximum(x), length=50)
+                y_fit = a .* x_fit.^b
+                # Filter out non-positive fit values for log scale
+                valid_fit = y_fit .> 0
+                if any(valid_fit)
+                    lines!(ax_b, collect(x_fit)[valid_fit], y_fit[valid_fit],
+                           color = :gray, linestyle = :dash,
+                           label = @sprintf("∝ n^{%.1f}", b))
+                    axislegend(ax_b, position = :lt)
+                end
+            end
         end
     end
 
@@ -426,21 +445,29 @@ function figure_scaling_analysis(results::Vector{ScalingDataPoint}; save_path=no
     if !isempty(ofd_t_data)
         x = [r.parameter_value for r in ofd_t_data]
         y = [r.mean_bond_dim for r in ofd_t_data]
-        scatterlines!(ax_d, x, y, color = COLORS[:ofd],
-                      label = "With OFD", marker = :circle)
+        # Filter out non-positive values for log scale
+        valid_idx = findall(yi -> yi > 0, y)
+        if !isempty(valid_idx)
+            scatterlines!(ax_d, x[valid_idx], y[valid_idx], color = COLORS[:ofd],
+                          label = "With OFD", marker = :circle)
+        end
     end
 
     if !isempty(none_t_data)
         x = [r.parameter_value for r in none_t_data]
         y = [r.mean_bond_dim for r in none_t_data]
-        scatterlines!(ax_d, x, y, color = COLORS[:none],
-                      label = "No disentangling", marker = :rect)
+        # Filter out non-positive values for log scale
+        valid_idx = findall(yi -> yi > 0, y)
+        if !isempty(valid_idx)
+            scatterlines!(ax_d, x[valid_idx], y[valid_idx], color = COLORS[:none],
+                          label = "No disentangling", marker = :rect)
 
-        # Add 2^t reference line
-        x_ref = 1:maximum(x)
-        y_ref = 2.0 .^ x_ref
-        lines!(ax_d, collect(x_ref), y_ref,
-               color = :gray, linestyle = :dash, label = "2^t")
+            # Add 2^t reference line
+            x_ref = 1:maximum(x[valid_idx])
+            y_ref = 2.0 .^ x_ref
+            lines!(ax_d, collect(x_ref), y_ref,
+                   color = :gray, linestyle = :dash, label = "2^t")
+        end
     end
 
     axislegend(ax_d, position = :lt)

@@ -218,47 +218,63 @@ end
 
 Predict the final bond dimension from twisted Paulis using GF(2) theory.
 
-The prediction formula is: χ = 2^(t - rank(M))
-where t is the number of T-gates (twisted Paulis) and rank is computed over GF(2).
+The prediction formula is: χ = 2^(t_eff - rank(M))
+where:
+- t_eff is the number of NON-DIAGONAL twisted Paulis (those with at least one X or Y)
+- rank is computed over GF(2)
 
 # Arguments
 - `twisted_paulis::Vector{<:PauliOperator}`: Vector of twisted Pauli operators
 
 # Returns
-- `Int`: Predicted maximum bond dimension
+- `Int`: Predicted bond dimension
 
 # Theory
-- If all T-gates are disentanglable via OFD: rank = t, so χ = 2^0 = 1
-- If no T-gates are disentanglable: rank can be at most n (number of qubits),
-  so χ = 2^(t - n) for t > n
-- In practice, rank depends on the circuit structure and how Clifford gates
-  scramble the Pauli strings
+Pure Z Paulis (diagonal rotations with xbit = [0,0,...,0]) do NOT increase MPS bond
+dimension because diagonal operations don't entangle qubits. Only twisted Paulis
+with X or Y components (non-zero xbit) contribute to bond dimension growth.
+
+The GF(2) matrix M only has non-zero rows for non-diagonal Paulis, so:
+- t_eff = number of non-zero rows in M = number of non-diagonal twisted Paulis
+- rank(M) = number of linearly independent non-diagonal twisted Paulis
+- χ = 2^(t_eff - rank) = bond dimension from entangling T-gates
 
 # Example
 ```julia
-# For independent T-gates on different qubits:
-# P[k] = Z_k (Z on qubit k), xbit = 0 for all positions
-# All rows are zero → rank = 0 → χ = 2^t
-# Wait, that's wrong for Z...
+# T-gates without Hadamard: twisted Paulis are Z_k (diagonal)
+# xbit = [0,0,...,0] for all → M is all zeros → t_eff = 0, rank = 0 → χ = 1
 
-# Actually for Z: xbit = 0, so M is all zeros
-# But this means no OFD possible (need X or Y for disentangling)
-
-# For T-gates after Hadamard layer (P[k] = X_k):
-# M = identity matrix → rank = min(t, n) → χ = 2^max(0, t-n)
+# T-gates after Hadamard: twisted Paulis are X_k (non-diagonal)
+# xbit = e_k (unit vector) → M = identity → t_eff = t, rank = min(t,n) → χ = 2^max(0,t-n)
 ```
 """
 function predict_bond_dimension(twisted_paulis::Vector{<:PauliOperator})::Int
     if isempty(twisted_paulis)
         return 1
     end
-    
+
     M = build_gf2_matrix(twisted_paulis)
-    t = length(twisted_paulis)
+
+    # Count non-zero rows (non-diagonal twisted Paulis)
+    # Pure Z Paulis have all-zero xbits and don't increase bond dimension
+    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
+
+    if t_eff == 0
+        return 1  # All pure Z Paulis → no entanglement → bond dim = 1
+    end
+
     r = gf2_rank(M)
-    
-    # Bond dimension formula
-    return 2^(t - r)
+
+    # Bond dimension formula: χ = 2^(t_eff - rank)
+    # Cap at 2^62 to avoid Int64 overflow (2^63 is negative in signed int)
+    exponent = t_eff - r
+    if exponent <= 0
+        return 1
+    elseif exponent >= 62
+        return typemax(Int) ÷ 2  # Return a very large value that won't overflow
+    else
+        return 2^exponent
+    end
 end
 
 """
@@ -270,17 +286,36 @@ Predict bond dimension directly from GF(2) matrix.
 - `M::Matrix{Bool}`: GF(2) matrix (t × n)
 
 # Returns
-- `Int`: Predicted maximum bond dimension
+- `Int`: Predicted bond dimension
+
+# Note
+Pure Z rows (all-zero rows) are excluded from the effective T-count since
+diagonal rotations don't increase MPS bond dimension.
 """
 function predict_bond_dimension(M::Matrix{Bool})::Int
     if isempty(M)
         return 1
     end
-    
-    t = size(M, 1)
+
+    # Count non-zero rows (non-diagonal twisted Paulis)
+    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
+
+    if t_eff == 0
+        return 1  # All pure Z Paulis → no entanglement → bond dim = 1
+    end
+
     r = gf2_rank(M)
-    
-    return 2^(t - r)
+
+    # Bond dimension formula: χ = 2^(t_eff - rank)
+    # Cap at 2^62 to avoid Int64 overflow (2^63 is negative in signed int)
+    exponent = t_eff - r
+    if exponent <= 0
+        return 1
+    elseif exponent >= 62
+        return typemax(Int) ÷ 2  # Return a very large value that won't overflow
+    else
+        return 2^exponent
+    end
 end
 
 #==============================================================================#
@@ -372,36 +407,45 @@ Analyze the GF(2) structure of twisted Paulis.
 
 # Returns
 - `NamedTuple` with fields:
-  - `t::Int`: Number of T-gates
+  - `t::Int`: Total number of T-gates
+  - `t_eff::Int`: Number of non-diagonal T-gates (with X or Y components)
+  - `n_pure_z::Int`: Number of pure Z Paulis (diagonal, don't increase bond dim)
   - `n::Int`: Number of qubits
   - `rank::Int`: GF(2) rank
-  - `nullity::Int`: t - rank (number of "redundant" T-gates)
+  - `nullity::Int`: t_eff - rank (bond dimension exponent)
   - `predicted_chi::Int`: 2^nullity
   - `independent_rows::Vector{Int}`: Indices of linearly independent rows
 """
 function analyze_gf2_structure(twisted_paulis::Vector{<:PauliOperator})
     if isempty(twisted_paulis)
-        return (t=0, n=0, rank=0, nullity=0, predicted_chi=1, independent_rows=Int[])
+        return (t=0, t_eff=0, n_pure_z=0, n=0, rank=0, nullity=0, predicted_chi=1, independent_rows=Int[])
     end
-    
+
     t = length(twisted_paulis)
     n = nqubits(twisted_paulis[1])
-    
+
     M = build_gf2_matrix(twisted_paulis)
     M_copy = copy(M)
-    
+
+    # Count non-zero rows (non-diagonal Paulis that actually increase bond dim)
+    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
+    n_pure_z = t - t_eff
+
     # Perform elimination and track pivots
     r = gf2_rank!(M_copy)
-    
+
     # Find which original rows became pivot rows
     # This requires re-running elimination with tracking
     independent_rows = find_independent_rows(M)
-    
-    nullity = t - r
-    predicted_chi = 2^nullity
-    
+
+    # Nullity uses t_eff, not t, because pure Z Paulis don't increase bond dim
+    nullity = max(0, t_eff - r)
+    predicted_chi = nullity >= 62 ? (typemax(Int) ÷ 2) : 2^nullity
+
     return (
         t=t,
+        t_eff=t_eff,
+        n_pure_z=n_pure_z,
         n=n,
         rank=r,
         nullity=nullity,

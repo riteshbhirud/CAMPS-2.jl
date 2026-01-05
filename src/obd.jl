@@ -23,17 +23,613 @@
 # Key insight: Clifford gates preserve stabilizer structure, so the
 # optimization is over a finite discrete group (11,520 elements for 2 qubits).
 #
-# Complexity: O(sweeps × n × 11520 × χ³) where χ is bond dimension.
+# Complexity (IMPROVED): O(sweeps × n × (χ³ + 11520)) where χ is bond dimension.
+#
+# The improved algorithm from Section IV.A uses the Pauli basis representation:
+# - Precompute 16 Pauli expectations ⟨σ₁⊗σ₂⟩ from the RDM (O(χ³) to extract RDM)
+# - For each Clifford U, evaluate Rényi-2 entropy in O(4) using:
+#   Tr(ρ₁²) = (1/2) Σ_{σ₁∈{I,X,Y,Z}} ⟨U†(σ₁⊗I)U⟩_ρ²
+# - Cliffords permute Paulis, so U†(σ₁⊗I)U = ±(τ₁⊗τ₂) can be precomputed
+#
+# This gives O(χ³ + 11520×4) ≈ O(χ³ + 46K) per bond, vs naive O(χ³ + 11520×128)
 #==============================================================================#
+
+#==============================================================================#
+# IMPROVED OBD: PAULI-BASIS FAST EVALUATION (Liu & Clark Eq. 19)
+#==============================================================================#
+
+"""
+    PauliExpectations
+
+Precomputed Pauli expectations for a two-site reduced density matrix.
+
+For a two-qubit state ρ, stores ⟨σ₁⊗σ₂⟩ = Tr((σ₁⊗σ₂)ρ) for all 16 combinations
+of σ₁, σ₂ ∈ {I, X, Y, Z}.
+
+The expectations are stored as a 4×4 matrix indexed by Pauli indices 1-4.
+"""
+struct PauliExpectations
+    values::Matrix{ComplexF64}  # 4×4 matrix: values[σ₁_idx, σ₂_idx]
+end
+
+"""
+    PAULI_INDEX
+
+Map from Pauli symbol to index: I=1, X=2, Y=3, Z=4
+"""
+const PAULI_INDEX = Dict(:I => 1, :X => 2, :Y => 3, :Z => 4)
+const INDEX_TO_PAULI = [:I, :X, :Y, :Z]
+
+"""
+    CliffordPauliMap
+
+Precomputed mapping of how a Clifford transforms (σ₁⊗I) for the 4 Paulis.
+
+For OBD, we need U†(σ₁⊗I)U for each σ₁ ∈ {I, X, Y, Z}.
+Since U is Clifford, U†PU = ±Q for some Pauli Q.
+
+Stores:
+- mapped_paulis: 4-element vector of (σ₁_idx, σ₂_idx) tuples
+- phases: 4-element vector of phase factors (+1, -1, +i, -i)
+"""
+struct CliffordPauliMap
+    mapped_paulis::Vector{Tuple{Int, Int}}  # (σ₁_idx, σ₂_idx) for each input σ₁
+    phases::Vector{ComplexF64}               # Phase factor for each mapping
+end
+
+# Global cache for Clifford-Pauli mappings (built once, used for all bonds)
+const CLIFFORD_PAULI_MAP_CACHE = Ref{Union{Vector{CliffordPauliMap}, Nothing}}(nothing)
+const CLIFFORD_PAULI_MAP_CACHE_LOCK = ReentrantLock()
+
+"""
+    precompute_pauli_expectations(rho::Matrix{ComplexF64}) -> PauliExpectations
+
+Compute all 16 Pauli expectations ⟨σ₁⊗σ₂⟩ = Tr((σ₁⊗σ₂)ρ) for a 4×4 density matrix.
+
+# Arguments
+- `rho::Matrix{ComplexF64}`: 4×4 two-qubit density matrix
+
+# Returns
+- `PauliExpectations`: Structure containing all 16 expectation values
+
+# Complexity
+O(16 × 16) = O(256) since each expectation is a trace of 4×4 matrices.
+
+# Note
+Uses the property that Tr(Pρ) = Σᵢⱼ Pᵢⱼ ρⱼᵢ for efficient computation.
+"""
+function precompute_pauli_expectations(rho::Matrix{ComplexF64})::PauliExpectations
+    # Pauli matrices
+    I2 = ComplexF64[1 0; 0 1]
+    X = ComplexF64[0 1; 1 0]
+    Y = ComplexF64[0 -im; im 0]
+    Z = ComplexF64[1 0; 0 -1]
+    paulis = [I2, X, Y, Z]
+
+    expectations = zeros(ComplexF64, 4, 4)
+
+    for (i, σ1) in enumerate(paulis)
+        for (j, σ2) in enumerate(paulis)
+            # Compute σ₁ ⊗ σ₂
+            P = kron(σ1, σ2)
+            # Compute Tr(P × ρ)
+            expectations[i, j] = tr(P * rho)
+        end
+    end
+
+    return PauliExpectations(expectations)
+end
+
+"""
+    compute_clifford_pauli_action(U::Matrix{ComplexF64}, σ_idx::Int) -> Tuple{Int, Int, ComplexF64}
+
+Compute how a Clifford U transforms (σ⊗I): U†(σ⊗I)U = phase × (τ₁⊗τ₂)
+
+# Arguments
+- `U::Matrix{ComplexF64}`: 4×4 Clifford unitary matrix
+- `σ_idx::Int`: Index of input Pauli (1=I, 2=X, 3=Y, 4=Z)
+
+# Returns
+- `Tuple{Int, Int, ComplexF64}`: (τ₁_idx, τ₂_idx, phase) where U†(σ⊗I)U = phase×(τ₁⊗τ₂)
+
+# Note
+The phase is one of {+1, -1, +i, -i} since Cliffords map Paulis to Paulis.
+"""
+function compute_clifford_pauli_action(U::Matrix{ComplexF64}, σ_idx::Int)::Tuple{Int, Int, ComplexF64}
+    # Pauli matrices
+    I2 = ComplexF64[1 0; 0 1]
+    X = ComplexF64[0 1; 1 0]
+    Y = ComplexF64[0 -im; im 0]
+    Z = ComplexF64[1 0; 0 -1]
+    paulis = [I2, X, Y, Z]
+
+    # Compute σ ⊗ I
+    σ = paulis[σ_idx]
+    P_in = kron(σ, I2)
+
+    # Compute U† P_in U
+    P_out = U' * P_in * U
+
+    # Decompose P_out into τ₁ ⊗ τ₂ with phase
+    # P_out = phase × (τ₁ ⊗ τ₂)
+    # We find (τ₁, τ₂) by computing Tr((τ₁⊗τ₂) × P_out)/4
+
+    best_match = (1, 1)
+    best_phase = 1.0 + 0.0im
+    best_score = 0.0
+
+    for (i, τ1) in enumerate(paulis)
+        for (j, τ2) in enumerate(paulis)
+            P_candidate = kron(τ1, τ2)
+            # Tr((τ₁⊗τ₂) × P_out) should be ±4 or ±4i if this is the right Pauli
+            coeff = tr(P_candidate * P_out) / 4
+            score = abs(coeff)
+            if score > best_score
+                best_score = score
+                best_match = (i, j)
+                # Normalize phase to one of {+1, -1, +i, -i}
+                if abs(coeff - 1.0) < 1e-10
+                    best_phase = 1.0 + 0.0im
+                elseif abs(coeff + 1.0) < 1e-10
+                    best_phase = -1.0 + 0.0im
+                elseif abs(coeff - im) < 1e-10
+                    best_phase = 0.0 + 1.0im
+                elseif abs(coeff + im) < 1e-10
+                    best_phase = 0.0 - 1.0im
+                else
+                    # Should not happen for Cliffords, but handle gracefully
+                    best_phase = coeff / abs(coeff)
+                end
+            end
+        end
+    end
+
+    return (best_match[1], best_match[2], best_phase)
+end
+
+"""
+    build_clifford_pauli_map(U::Matrix{ComplexF64}) -> CliffordPauliMap
+
+Build the Pauli mapping for a single Clifford unitary.
+
+# Arguments
+- `U::Matrix{ComplexF64}`: 4×4 Clifford unitary matrix
+
+# Returns
+- `CliffordPauliMap`: Mapping of (σ⊗I) → U†(σ⊗I)U for σ ∈ {I, X, Y, Z}
+"""
+function build_clifford_pauli_map(U::Matrix{ComplexF64})::CliffordPauliMap
+    mapped_paulis = Vector{Tuple{Int, Int}}(undef, 4)
+    phases = Vector{ComplexF64}(undef, 4)
+
+    for σ_idx in 1:4
+        τ1_idx, τ2_idx, phase = compute_clifford_pauli_action(U, σ_idx)
+        mapped_paulis[σ_idx] = (τ1_idx, τ2_idx)
+        phases[σ_idx] = phase
+    end
+
+    return CliffordPauliMap(mapped_paulis, phases)
+end
+
+"""
+    get_or_build_clifford_pauli_cache(cache::Union{TwoQubitCliffordCache, Nothing}=nothing) -> Vector{CliffordPauliMap}
+
+Get or build the global cache of Clifford-Pauli mappings.
+
+This cache is built once and reused for all OBD evaluations.
+Thread-safe via lock protection.
+
+# Arguments
+- `cache::Union{TwoQubitCliffordCache, Nothing}`: Optional precomputed Clifford cache
+
+# Returns
+- `Vector{CliffordPauliMap}`: Vector of 11,520 Pauli mappings (one per Clifford)
+"""
+function get_or_build_clifford_pauli_cache(cache::Union{TwoQubitCliffordCache, Nothing}=nothing)::Vector{CliffordPauliMap}
+    lock(CLIFFORD_PAULI_MAP_CACHE_LOCK) do
+        if CLIFFORD_PAULI_MAP_CACHE[] !== nothing
+            return CLIFFORD_PAULI_MAP_CACHE[]
+        end
+
+        # Build the cache
+        if cache !== nothing
+            matrices = cache.matrices
+        else
+            cliffords = get_all_two_qubit_cliffords()
+            matrices = [clifford_to_matrix(C) for C in cliffords]
+        end
+
+        n_clif = length(matrices)
+        pauli_maps = Vector{CliffordPauliMap}(undef, n_clif)
+
+        for i in 1:n_clif
+            pauli_maps[i] = build_clifford_pauli_map(matrices[i])
+        end
+
+        CLIFFORD_PAULI_MAP_CACHE[] = pauli_maps
+        return pauli_maps
+    end
+end
+
+"""
+    evaluate_renyi2_from_pauli(expectations::PauliExpectations, pauli_map::CliffordPauliMap) -> Float64
+
+Evaluate the second Rényi entropy after applying a Clifford, using precomputed Pauli data.
+
+# Formula
+For ρ' = UρU† and ρ₁ = Tr₂(ρ'):
+    Tr(ρ₁²) = (1/2) Σ_{σ₁∈{I,X,Y,Z}} |⟨U†(σ₁⊗I)U⟩_ρ|²
+
+Since U†(σ₁⊗I)U = phase × (τ₁⊗τ₂), we have:
+    ⟨U†(σ₁⊗I)U⟩_ρ = phase × ⟨τ₁⊗τ₂⟩_ρ
+
+And |phase|² = 1, so:
+    Tr(ρ₁²) = (1/2) Σ_{σ₁} |⟨τ₁⊗τ₂⟩_ρ|²
+
+# Arguments
+- `expectations::PauliExpectations`: Precomputed Pauli expectations
+- `pauli_map::CliffordPauliMap`: Precomputed Clifford-Pauli mapping
+
+# Returns
+- `Float64`: Second Rényi entropy S₂ = -log(Tr(ρ₁²))
+
+# Complexity
+O(4) - just 4 lookups and arithmetic operations.
+"""
+function evaluate_renyi2_from_pauli(expectations::PauliExpectations, pauli_map::CliffordPauliMap)::Float64
+    purity = 0.0
+
+    for σ_idx in 1:4
+        τ1_idx, τ2_idx = pauli_map.mapped_paulis[σ_idx]
+        # Get ⟨τ₁⊗τ₂⟩_ρ
+        exp_val = expectations.values[τ1_idx, τ2_idx]
+        # |phase × exp_val|² = |exp_val|² since |phase| = 1
+        purity += abs2(exp_val)
+    end
+
+    # Tr(ρ₁²) = (1/2) × purity
+    purity_normalized = purity / 2.0
+
+    # Clamp to valid range
+    purity_normalized = clamp(real(purity_normalized), 1e-15, 1.0)
+
+    return -log(purity_normalized)
+end
+
+"""
+    find_optimal_clifford_fast(expectations::PauliExpectations,
+                                pauli_maps::Vector{CliffordPauliMap};
+                                use_representatives::Bool=false) -> Tuple{Int, Float64}
+
+Find the optimal Clifford to minimize Rényi-2 entropy using fast O(1) evaluation.
+
+# Arguments
+- `expectations::PauliExpectations`: Precomputed Pauli expectations from RDM
+- `pauli_maps::Vector{CliffordPauliMap}`: Precomputed Clifford-Pauli mappings
+- `use_representatives::Bool`: If true, only search over representative subset
+
+# Returns
+- `Tuple{Int, Float64}`: (best_index, best_entropy)
+
+# Complexity
+O(11520 × 4) = O(46080) ≈ O(1) per Clifford
+This is ~30× faster than the naive O(11520 × 128) approach.
+"""
+function find_optimal_clifford_fast(expectations::PauliExpectations,
+                                     pauli_maps::Vector{CliffordPauliMap};
+                                     use_representatives::Bool=false)::Tuple{Int, Float64}
+    n_search = use_representatives ? min(length(pauli_maps), 20) : length(pauli_maps)
+
+    best_idx = 1
+    best_entropy = Inf
+
+    for i in 1:n_search
+        entropy = evaluate_renyi2_from_pauli(expectations, pauli_maps[i])
+        if entropy < best_entropy
+            best_entropy = entropy
+            best_idx = i
+        end
+    end
+
+    return (best_idx, best_entropy)
+end
+
+#==============================================================================#
+# EQUATION 19: EXACT TENSOR CONTRACTION APPROACH (Liu & Clark Section IV.A)
+#==============================================================================#
+
+# The exact Equation 19 approach from the paper:
+# 1. Contract MPS tensors A_n and A_{n+1}, keeping all physical indices open
+# 2. This gives a base tensor T with 2^8 = 256 elements
+# 3. For each Clifford U, contract according to the purity diagram
+# 4. The contraction gives Tr(ρ_1²) = exp(-S₂)
+#
+# Complexity: O(χ³) for base tensor + O(256) per Clifford = O(χ³ + 11520×256)
+
+"""
+    Renyi2BaseTensor
+
+Base tensor for Equation 19 purity computation.
+
+The tensor T[a,b,c,d,e,f,g,h] = ψ[a,e] × ψ*[b,f] × ψ[c,g] × ψ*[d,h]
+where ψ is the two-site wavefunction and indices are:
+- a,b: site n indices for copy 1 (ket, bra)
+- c,d: site n indices for copy 2 (ket, bra)
+- e,f: site n+1 indices for copy 1 (ket, bra)
+- g,h: site n+1 indices for copy 2 (ket, bra)
+
+This 256-element tensor encodes all information needed to compute
+Tr(ρ_n²) for any two-qubit Clifford U applied to the state.
+"""
+struct Renyi2BaseTensor
+    values::Array{ComplexF64, 8}  # (2,2,2,2,2,2,2,2) tensor
+end
+
+"""
+    Renyi2ContractionKernel
+
+Precomputed contraction kernel for a Clifford unitary.
+
+For Clifford U, the kernel K[a,b,c,d,e,f,g,h] encodes how to contract
+with the base tensor T to compute Tr(ρ_n'²) after applying U.
+
+The purity is: Tr(ρ_n'²) = Σ T[a,b,c,d,e,f,g,h] × K[a,b,c,d,e,f,g,h]
+"""
+struct Renyi2ContractionKernel
+    values::Array{ComplexF64, 8}  # (2,2,2,2,2,2,2,2) tensor
+end
+
+# Global cache for Equation 19 contraction kernels
+const RENYI2_KERNEL_CACHE = Ref{Union{Vector{Renyi2ContractionKernel}, Nothing}}(nothing)
+const RENYI2_KERNEL_CACHE_LOCK = ReentrantLock()
+
+"""
+    precompute_renyi2_base_tensor(mps::MPS, bond::Int, sites) -> Renyi2BaseTensor
+
+Compute the 256-element base tensor for Equation 19 purity evaluation.
+
+This computes the base tensor from the two-site reduced density matrix,
+which properly handles link indices in the MPS.
+
+# Arguments
+- `mps::MPS`: Matrix Product State (not modified)
+- `bond::Int`: Bond index (between sites bond and bond+1)
+- `sites`: Site indices (unused, kept for API compatibility)
+
+# Returns
+- `Renyi2BaseTensor`: 256-element base tensor T[a,b,c,d,e,f,g,h]
+
+# Complexity
+O(χ³) for extracting the two-site RDM, O(256) for building T.
+
+# Formula
+T[a,b,c,d,e,f,g,h] = ρ[a,e; b,f] × ρ[c,g; d,h]
+where ρ is the two-site reduced density matrix.
+
+This is equivalent to ψ[a,e] × ψ*[b,f] × ψ[c,g] × ψ*[d,h] when ρ = |ψ⟩⟨ψ|.
+"""
+function precompute_renyi2_base_tensor(mps::MPS, bond::Int, sites)::Renyi2BaseTensor
+    site1 = bond
+    site2 = bond + 1
+
+    # Extract two-site RDM (O(χ³)) - this handles link indices correctly
+    rho = extract_two_site_rdm(mps, site1, site2)
+
+    # Build the 8-index base tensor from the RDM
+    # T[a,b,c,d,e,f,g,h] = ρ[a,e; b,f] × ρ[c,g; d,h]
+    # where ρ indices are: row = 2*(first_qubit-1) + second_qubit
+    T = zeros(ComplexF64, 2, 2, 2, 2, 2, 2, 2, 2)
+
+    for a in 1:2, b in 1:2, c in 1:2, d in 1:2
+        for e in 1:2, f in 1:2, g in 1:2, h in 1:2
+            # RDM index: row = 2*(a-1)+e, col = 2*(b-1)+f
+            row1 = 2*(a-1) + e
+            col1 = 2*(b-1) + f
+            row2 = 2*(c-1) + g
+            col2 = 2*(d-1) + h
+            T[a,b,c,d,e,f,g,h] = rho[row1, col1] * rho[row2, col2]
+        end
+    end
+
+    return Renyi2BaseTensor(T)
+end
+
+"""
+    compute_renyi2_kernel(U::Matrix{ComplexF64}) -> Renyi2ContractionKernel
+
+Compute the contraction kernel for a Clifford unitary.
+
+The kernel encodes the index contractions in the purity diagram:
+- Partial trace over site n+1 (e'=f' and g'=h')
+- Matrix multiplication and trace for Tr(ρ_n²) (b'=c' and a'=d')
+
+# Arguments
+- `U::Matrix{ComplexF64}`: 4×4 Clifford unitary matrix
+
+# Returns
+- `Renyi2ContractionKernel`: 256-element contraction kernel
+
+# Formula
+K[a,b,c,d,e,f,g,h] = Σ_{k,m,p,q} U[k,p,a,e] × U*[m,p,b,f] × U[m,q,c,g] × U*[k,q,d,h]
+where the sum runs over all values of (k,m,p,q) ∈ {1,2}^4 that satisfy:
+- k = a' = d' (trace condition)
+- m = b' = c' (matrix multiplication)
+- p = e' = f' (partial trace copy 1)
+- q = g' = h' (partial trace copy 2)
+
+# Complexity
+O(256) - 16 terms in the sum for each of 256 output elements.
+"""
+function compute_renyi2_kernel(U::Matrix{ComplexF64})::Renyi2ContractionKernel
+    @assert size(U) == (4, 4) "U must be a 4×4 matrix"
+
+    # Reshape U to 4-index tensor: U[output_n, output_{n+1}, input_n, input_{n+1}]
+    # Matrix ordering: |00⟩=1, |01⟩=2, |10⟩=3, |11⟩=4
+    # So row/col index = 2*(n_index-1) + (n+1_index)
+    # We need: U_tensor[k, p, a, e] = U[2*(k-1)+p, 2*(a-1)+e]
+    U_tensor = zeros(ComplexF64, 2, 2, 2, 2)
+    for k in 1:2, p in 1:2, a in 1:2, e in 1:2
+        row = 2*(k-1) + p
+        col = 2*(a-1) + e
+        U_tensor[k, p, a, e] = U[row, col]
+    end
+
+    # Compute the contraction kernel
+    K = zeros(ComplexF64, 2, 2, 2, 2, 2, 2, 2, 2)
+
+    for a in 1:2, b in 1:2, c in 1:2, d in 1:2
+        for e in 1:2, f in 1:2, g in 1:2, h in 1:2
+            # Sum over contracted indices (k, m, p, q)
+            val = zero(ComplexF64)
+            for k in 1:2, m in 1:2, p in 1:2, q in 1:2
+                # U[k,p,a,e] × U*[m,p,b,f] × U[m,q,c,g] × U*[k,q,d,h]
+                val += U_tensor[k, p, a, e] *
+                       conj(U_tensor[m, p, b, f]) *
+                       U_tensor[m, q, c, g] *
+                       conj(U_tensor[k, q, d, h])
+            end
+            K[a, b, c, d, e, f, g, h] = val
+        end
+    end
+
+    return Renyi2ContractionKernel(K)
+end
+
+"""
+    get_or_build_renyi2_kernel_cache(cache::Union{TwoQubitCliffordCache, Nothing}=nothing)
+        -> Vector{Renyi2ContractionKernel}
+
+Get or build the global cache of Equation 19 contraction kernels.
+
+This cache is built once and reused for all OBD evaluations.
+Thread-safe via lock protection.
+
+# Arguments
+- `cache::Union{TwoQubitCliffordCache, Nothing}`: Optional precomputed Clifford cache
+
+# Returns
+- `Vector{Renyi2ContractionKernel}`: Vector of 11,520 contraction kernels
+"""
+function get_or_build_renyi2_kernel_cache(cache::Union{TwoQubitCliffordCache, Nothing}=nothing)::Vector{Renyi2ContractionKernel}
+    lock(RENYI2_KERNEL_CACHE_LOCK) do
+        if RENYI2_KERNEL_CACHE[] !== nothing
+            return RENYI2_KERNEL_CACHE[]
+        end
+
+        # Get Clifford matrices
+        if cache !== nothing
+            matrices = cache.matrices
+        else
+            cliffords = get_all_two_qubit_cliffords()
+            matrices = [clifford_to_matrix(C) for C in cliffords]
+        end
+
+        n_clif = length(matrices)
+        kernels = Vector{Renyi2ContractionKernel}(undef, n_clif)
+
+        for i in 1:n_clif
+            kernels[i] = compute_renyi2_kernel(matrices[i])
+        end
+
+        RENYI2_KERNEL_CACHE[] = kernels
+        return kernels
+    end
+end
+
+"""
+    evaluate_renyi2_equation19(base_tensor::Renyi2BaseTensor,
+                                kernel::Renyi2ContractionKernel) -> Float64
+
+Evaluate the Rényi-2 entropy using Equation 19 tensor contraction.
+
+Computes Tr(ρ_n'²) = Σ T[a,b,c,d,e,f,g,h] × K[a,b,c,d,e,f,g,h]
+then returns S₂ = -log(Tr(ρ_n'²)).
+
+# Arguments
+- `base_tensor::Renyi2BaseTensor`: Precomputed base tensor from MPS
+- `kernel::Renyi2ContractionKernel`: Precomputed kernel for Clifford U
+
+# Returns
+- `Float64`: Second Rényi entropy S₂ = -log(Tr(ρ_n²))
+
+# Complexity
+O(256) - simple element-wise product and sum.
+"""
+function evaluate_renyi2_equation19(base_tensor::Renyi2BaseTensor,
+                                     kernel::Renyi2ContractionKernel)::Float64
+    # Compute purity as dot product: Tr(ρ²) = Σ T × K
+    T = base_tensor.values
+    K = kernel.values
+
+    purity = real(sum(T .* K))
+
+    # Clamp to valid range [0, 1]
+    purity = clamp(purity, 1e-15, 1.0)
+
+    return -log(purity)
+end
+
+"""
+    find_optimal_clifford_equation19(base_tensor::Renyi2BaseTensor,
+                                      kernels::Vector{Renyi2ContractionKernel};
+                                      use_representatives::Bool=false) -> Tuple{Int, Float64}
+
+Find the optimal Clifford to minimize Rényi-2 entropy using Equation 19.
+
+This is the exact algorithm from Liu & Clark Section IV.A, using tensor
+contraction for O(256) evaluation per Clifford.
+
+# Arguments
+- `base_tensor::Renyi2BaseTensor`: Precomputed base tensor from MPS
+- `kernels::Vector{Renyi2ContractionKernel}`: Precomputed kernels for all Cliffords
+- `use_representatives::Bool`: If true, only search over representative subset
+
+# Returns
+- `Tuple{Int, Float64}`: (best_clifford_index, best_entropy)
+
+# Complexity
+O(11520 × 256) = O(2.9M) for full search, which is O(1) in terms of χ.
+"""
+function find_optimal_clifford_equation19(base_tensor::Renyi2BaseTensor,
+                                           kernels::Vector{Renyi2ContractionKernel};
+                                           use_representatives::Bool=false)::Tuple{Int, Float64}
+    n_search = use_representatives ? min(length(kernels), 20) : length(kernels)
+
+    best_idx = 1
+    best_entropy = Inf
+
+    for i in 1:n_search
+        entropy = evaluate_renyi2_equation19(base_tensor, kernels[i])
+        if entropy < best_entropy
+            best_entropy = entropy
+            best_idx = i
+        end
+    end
+
+    return (best_idx, best_entropy)
+end
 
 #==============================================================================#
 # OBD SINGLE BOND OPTIMIZATION
 #==============================================================================#
 
 """
+    OBDAlgorithm
+
+Algorithm selection for OBD optimization.
+
+- `:pauli` - Pauli-basis fast evaluation (default, O(4) per Clifford)
+- `:equation19` - Exact tensor contraction from Liu & Clark Eq. 19 (O(256) per Clifford)
+- `:naive` - Direct matrix computation (O(128) per Clifford)
+"""
+const OBDAlgorithm = Symbol
+
+"""
     find_optimal_clifford_for_bond(mps::MPS, bond::Int, sites::AbstractVector;
                                     use_full_search::Bool=false,
-                                    cache::Union{TwoQubitCliffordCache, Nothing}=nothing)
+                                    cache::Union{TwoQubitCliffordCache, Nothing}=nothing,
+                                    use_fast_algorithm::Bool=true,
+                                    algorithm::Symbol=:pauli)
         -> Tuple{Int, Float64, Float64}
 
 Find the optimal two-qubit Clifford to minimize entanglement at a bond.
@@ -44,33 +640,122 @@ Find the optimal two-qubit Clifford to minimize entanglement at a bond.
 - `sites::AbstractVector`: Site indices
 - `use_full_search::Bool`: If true, search all 11,520 Cliffords; else use representatives
 - `cache::Union{TwoQubitCliffordCache, Nothing}`: Precomputed Clifford cache
+- `use_fast_algorithm::Bool`: If true, use fast algorithm (default); deprecated, use `algorithm`
+- `algorithm::Symbol`: Algorithm to use:
+  - `:pauli` - Pauli-basis fast evaluation (O(4) per Clifford, default)
+  - `:equation19` - Exact tensor contraction from Eq. 19 (O(256) per Clifford)
+  - `:naive` - Direct matrix computation (O(128) per Clifford)
 
 # Returns
 - `Tuple{Int, Float64, Float64}`: (best_index, initial_entropy, final_entropy)
 
-# Algorithm
-1. Extract the two-site RDM ρ
-2. For each Clifford U, compute entropy of Tr_2(U ρ U†)
-3. Return the Clifford that gives minimum entropy
+# Algorithm Options
+
+## Pauli-basis (default, `:pauli`)
+Uses Pauli expectation values for O(4) per-Clifford evaluation:
+1. Extract two-site RDM ρ (O(χ³))
+2. Compute 16 Pauli expectations ⟨σ₁⊗σ₂⟩ (O(256))
+3. For each Clifford, use cached Pauli mapping (O(4) per Clifford)
+Complexity: O(χ³ + 11520×4) ≈ O(χ³ + 46K)
+
+## Equation 19 (`:equation19`)
+Exact tensor contraction from Liu & Clark Section IV.A:
+1. Compute 256-element base tensor from MPS (O(χ³))
+2. For each Clifford, contract with precomputed kernel (O(256) per Clifford)
+Complexity: O(χ³ + 11520×256) ≈ O(χ³ + 2.9M)
+
+## Naive (`:naive`)
+Direct matrix computation:
+1. Extract two-site RDM ρ (O(χ³))
+2. For each Clifford, transform ρ and compute entropy (O(128) per Clifford)
+Complexity: O(χ³ + 11520×128) ≈ O(χ³ + 1.5M)
 
 # Note
 Uses second Rényi entropy for efficiency: S_2(ρ) = -log(Tr(ρ²))
 """
 function find_optimal_clifford_for_bond(mps::MPS, bond::Int, sites::AbstractVector;
                                          use_full_search::Bool=false,
-                                         cache::Union{TwoQubitCliffordCache, Nothing}=nothing)
+                                         cache::Union{TwoQubitCliffordCache, Nothing}=nothing,
+                                         use_fast_algorithm::Bool=true,
+                                         algorithm::Symbol=:pauli)
     n = length(mps)
     (bond < 1 || bond >= n) && throw(ArgumentError("Invalid bond index"))
 
     site1 = bond
     site2 = bond + 1
 
-    # Extract two-site reduced density matrix
+    # Determine effective algorithm
+    # use_fast_algorithm=false forces naive mode for backwards compatibility
+    effective_algorithm = use_fast_algorithm ? algorithm : :naive
+
+    #==========================================================================
+    # EQUATION 19: Exact tensor contraction (Liu & Clark Section IV.A)
+    #
+    # Uses 8-index base tensor and precomputed contraction kernels:
+    # - Compute 256-element base tensor from MPS (O(χ³))
+    # - For each Clifford, contract with kernel (O(256))
+    #
+    # Total: O(χ³ + 11520×256)
+    ==========================================================================#
+
+    if effective_algorithm == :equation19 && use_full_search
+        # Equation 19 path: exact tensor contraction
+
+        # Step 1: Compute base tensor (O(χ³))
+        base_tensor = precompute_renyi2_base_tensor(mps, bond, sites)
+
+        # Step 2: Get or build kernel cache (O(1) if cached)
+        kernels = get_or_build_renyi2_kernel_cache(cache)
+
+        # Step 3: Find optimal Clifford using O(256) evaluation per Clifford
+        best_index, best_entropy = find_optimal_clifford_equation19(base_tensor, kernels;
+                                                                     use_representatives=false)
+
+        # Compute initial entropy for comparison
+        rho = extract_two_site_rdm(mps, site1, site2)
+        rho_1 = partial_trace_4x4(rho, true)
+        initial_entropy = compute_renyi2_entropy(rho_1)
+
+        return (best_index, initial_entropy, best_entropy)
+    end
+
+    #==========================================================================
+    # PAULI-BASIS: Fast O(4) per-Clifford evaluation
+    #
+    # Uses Pauli expectation values and Clifford-Pauli mappings:
+    # - Precompute 16 Pauli expectations from RDM
+    # - Use cached Clifford-Pauli mappings
+    # - Evaluate each Clifford in O(4) operations
+    #
+    # Total: O(χ³ + 11520×4)
+    ==========================================================================#
+
+    # Extract two-site reduced density matrix (O(χ³))
     rho = extract_two_site_rdm(mps, site1, site2)
 
     # Compute initial entropy (for comparison)
     rho_1 = partial_trace_4x4(rho, true)  # Trace out second qubit
     initial_entropy = compute_renyi2_entropy(rho_1)
+
+    if effective_algorithm == :pauli && use_full_search
+        # Pauli path: fast O(4) evaluation
+
+        # Step 1: Compute all 16 Pauli expectations (O(256))
+        expectations = precompute_pauli_expectations(rho)
+
+        # Step 2: Get or build Clifford-Pauli cache (O(1) if cached)
+        pauli_maps = get_or_build_clifford_pauli_cache(cache)
+
+        # Step 3: Find optimal Clifford using fast O(4) evaluation per Clifford
+        best_index, best_entropy = find_optimal_clifford_fast(expectations, pauli_maps;
+                                                               use_representatives=false)
+
+        return (best_index, initial_entropy, best_entropy)
+    end
+
+    #==========================================================================
+    # FALLBACK: Original algorithm (for representatives or when fast disabled)
+    ==========================================================================#
 
     # Get Cliffords to search over
     if use_full_search
@@ -85,7 +770,7 @@ function find_optimal_clifford_for_bond(mps::MPS, bond::Int, sites::AbstractVect
         cliffords_matrices = [clifford_to_matrix(C) for C in representatives]
     end
 
-    # Search for optimal Clifford
+    # Search for optimal Clifford (O(n_cliffords × 128))
     best_index = 1
     best_entropy = initial_entropy
 
@@ -284,13 +969,14 @@ function obd_sweep!(mps::MPS, sites::AbstractVector, clifford::Destabilizer;
                                       max_bond=max_bond, cutoff=cutoff)
 
         # Update accumulated Clifford: C → C·U†
-        # The Clifford operator U from the search needs to be inverted
+        # When we apply U to the MPS (|mps'⟩ = U|mps⟩), the physical state is:
+        #   C|mps'⟩ = C·U|mps⟩
+        # To preserve the physical state, we need C_new such that:
+        #   C_new|mps'⟩ = C|mps⟩
+        #   C_new·U|mps⟩ = C|mps⟩  for all |mps⟩
+        # Therefore C_new = C·U†
         U_clifford = all_cliffords[best_idx]
-
-        # Apply U† to the accumulated Clifford
-        # Since we applied U to |ψ⟩, we need C → C·U† to maintain C'|ψ'⟩ = C·U†·U|ψ⟩ = C|ψ⟩
-        # This is done by applying inv(U) to the Clifford
-        apply_clifford_to_destabilizer!(clifford, U_clifford, site1, site2; inverse=true)
+        apply_clifford_to_destabilizer!(clifford, U_clifford, site1, site2; inverse=false)
     end
 
     # Compute final entropies
@@ -312,44 +998,69 @@ end
     apply_clifford_to_destabilizer!(D::Destabilizer, C::CliffordOperator,
                                      site1::Int, site2::Int; inverse::Bool=false)
 
-Apply a two-qubit Clifford to the accumulated Destabilizer.
+Apply a two-qubit Clifford via RIGHT MULTIPLICATION to the accumulated Destabilizer.
+
+When we apply U to the MPS (|mps'⟩ = U|mps⟩), we need to update the Clifford
+as D_new = D · U† to preserve the physical state:
+    D_new |mps'⟩ = D · U† · U |mps⟩ = D |mps⟩
 
 # Arguments
-- `D::Destabilizer`: Accumulated Clifford (modified)
-- `C::CliffordOperator`: Two-qubit Clifford to apply
+- `D::Destabilizer`: Accumulated Clifford (modified via right multiplication)
+- `C::CliffordOperator`: Two-qubit Clifford that was applied to MPS
 - `site1::Int`: First qubit (in the full n-qubit system)
 - `site2::Int`: Second qubit
-- `inverse::Bool`: If true, apply C†; if false, apply C
+- `inverse::Bool`: If true, right-multiply by C; if false, right-multiply by C†
 
 # Note
 This embeds the 2-qubit Clifford into the n-qubit system by only acting
-on the specified qubits.
+on the specified qubits. Uses apply_inverse_gates! from clifford_interface.jl.
 """
 function apply_clifford_to_destabilizer!(D::Destabilizer, C::CliffordOperator,
                                           site1::Int, site2::Int; inverse::Bool=false)
-    # Get the gates that produce C from the Destabilizer representation
-    # For a two-qubit Clifford, we can decompose it into single-qubit and CNOT gates
-
-    # Since C is a CliffordOperator, we can apply it via its stabilizer tableau
-    # But we need to embed it into the n-qubit space
-
-    # The approach: build a sequence of gates that realizes C on qubits (site1, site2)
-    # This requires decomposing C into a gate sequence
-
-    # For now, use a decomposition approach via canonical form
+    # Decompose the 2-qubit Clifford into gates on the actual qubit indices
     gates = decompose_two_qubit_clifford(C, site1, site2)
 
     if inverse
-        # Apply gates in reverse order with inverses
-        for gate in reverse(gates)
-            apply!(D, inv(gate))
-        end
+        # D_new = D · U (right-multiply by U, not U†)
+        # Since apply_inverse_gates! computes D · (gates)†, we need to reverse the gates
+        # and take inverses to get D · U
+        inverse_gates = [inv(g) for g in reverse(gates)]
+        apply_inverse_gates!(D, inverse_gates)
     else
-        for gate in gates
-            apply!(D, gate)
-        end
+        # D_new = D · U† (right-multiply by U†)
+        # apply_inverse_gates! computes D · (gates)† where gates define U
+        # So we pass the gates directly
+        apply_inverse_gates!(D, gates)
     end
 
+    return D
+end
+
+"""
+    apply_clifford_left_multiply!(D::Destabilizer, C::CliffordOperator,
+                                   site1::Int, site2::Int)
+
+Apply a two-qubit Clifford via LEFT MULTIPLICATION to build up a Clifford circuit.
+
+For building Clifford circuits: C_new = U · C_old
+
+# Arguments
+- `D::Destabilizer`: Accumulated Clifford (modified via left multiplication)
+- `C::CliffordOperator`: Two-qubit Clifford to apply
+- `site1::Int`: First qubit
+- `site2::Int`: Second qubit
+"""
+function apply_clifford_left_multiply!(D::Destabilizer, C::CliffordOperator,
+                                       site1::Int, site2::Int)
+    # Decompose into gates
+    gates = decompose_two_qubit_clifford(C, site1, site2)
+    
+    # Apply each gate via left multiplication
+    # apply!(D, gate) does D → gate · D (left multiplication)
+    for gate in gates
+        apply!(D, gate)
+    end
+    
     return D
 end
 
@@ -1036,7 +1747,7 @@ function apply_rotation_hybrid!(state::CAMPSState, axis::Symbol, qubit::Int, θ:
     if strategy isa OFDStrategy
         success, _ = try_apply_ofd!(state, P_twisted, θ)
         if !success
-            @warn "OFD failed for rotation on qubit $qubit, applying directly"
+            @debug "OFD failed for rotation on qubit $qubit, applying directly"
             apply_twisted_rotation!(state.mps, state.sites, P_twisted, Float64(θ);
                                     max_bond=state.max_bond, cutoff=state.cutoff)
             add_twisted_pauli!(state, P_twisted)

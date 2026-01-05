@@ -362,6 +362,18 @@ export apply_rotation_with_obd!
 export apply_rotation_hybrid!, apply_t_gate_hybrid!, apply_tdag_gate_hybrid!
 export get_entropy_profile, get_bond_dimension_profile, estimate_obd_improvement
 
+# Equation 19 (Liu & Clark) tensor contraction approach
+export Renyi2BaseTensor, Renyi2ContractionKernel
+export precompute_renyi2_base_tensor, compute_renyi2_kernel
+export get_or_build_renyi2_kernel_cache
+export evaluate_renyi2_equation19, find_optimal_clifford_equation19
+
+# Pauli-basis fast evaluation
+export PauliExpectations, CliffordPauliMap
+export precompute_pauli_expectations, build_clifford_pauli_map
+export get_or_build_clifford_pauli_cache
+export evaluate_renyi2_from_pauli, find_optimal_clifford_fast
+
 #==============================================================================#
 # EXPORTS - Phase 4: Simulation
 #==============================================================================#
@@ -393,6 +405,7 @@ export random_t_depth_circuit, hardware_efficient_ansatz
 
 # Circuit analysis
 export analyze_circuit, predict_bond_dimension_for_circuit
+export apply_clifford_left_multiply!
 
 #==============================================================================#
 # VERSION INFO

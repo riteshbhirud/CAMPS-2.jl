@@ -239,21 +239,41 @@ function apply_ofd!(state::CAMPSState, P_twisted::PauliOperator, θ::Real,
 
     # Step 2: Apply D† to the accumulated Clifford
     # D† is applied by applying gates in reverse order with inverses
-    # Note: We want C_new = C · D†, which is achieved by apply_inverse_gates!
-    # But the paper convention is that we're updating C to absorb D†
-    # So we apply D† = (g_1 · g_2 · ... · g_k)† = g_k† · ... · g_2† · g_1†
+    # Note: We want C_new = D† · C (disentangler applied to state)
     apply_inverse_gates!(state.clifford, disentangler_flat)
 
     # Step 3: Apply the single-qubit rotation to the MPS on the control qubit
-    # The rotation is R_{σ_control}(θ) where σ_control is X or Y
-    # For the MPS in |0⟩^⊗n state initially, this creates the magic state
-    apply_local_rotation!(state.mps, state.sites, control_qubit, σ_control, Float64(θ))
+    #
+    # IMPORTANT: The twisted Pauli P̃ may have a phase (±1 or ±i).
+    # If P̃ = phase × P where P is the base Pauli (X or Y), then:
+    #   R_{P̃}(θ) = exp(-i θ P̃ / 2) = exp(-i θ × phase × P / 2)
+    #
+    # For real phases (phase = ±1):
+    #   phase = +1: R_{+P}(θ) = R_P(θ)   (use θ)
+    #   phase = -1: R_{-P}(θ) = R_P(-θ)  (use -θ)
+    #
+    # The phase is encoded in P_twisted.phase[]:
+    #   0x00 = +1, 0x01 = +i, 0x02 = -1, 0x03 = -i
+    #
+    # For stabilizer operations, we only expect phases 0x00 (+1) or 0x02 (-1).
+    phase_val = P_twisted.phase[]
+    θ_effective = Float64(θ)
+    if phase_val == 0x02
+        # Phase is -1, so negate the angle
+        θ_effective = -θ_effective
+    elseif phase_val == 0x01 || phase_val == 0x03
+        # Phases ±i should not occur for stabilizer Paulis in this context
+        @warn "Unexpected imaginary phase in twisted Pauli, results may be incorrect"
+    end
+    # phase_val == 0x00 means +1, no change needed
+
+    apply_local_rotation!(state.mps, state.sites, control_qubit, σ_control, θ_effective)
 
     # Step 4: Mark the control qubit as magic (no longer free)
     mark_as_magic!(state, control_qubit)
 
     # Step 5: Record the twisted Pauli for GF(2) analysis
-    add_twisted_pauli!(state, P_twisted)
+    #add_twisted_pauli!(state, P_twisted)
 
     return state
 end

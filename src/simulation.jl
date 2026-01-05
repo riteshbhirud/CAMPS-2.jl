@@ -640,13 +640,13 @@ function amplitude(state::CAMPSState, bitstring::Vector{Int})::ComplexF64
     C_op = CliffordOperator(state.clifford)
     C_mat = clifford_to_matrix(C_op)
 
-    # Convert bitstring to index (using big-endian convention matching clifford_to_matrix)
-    # In big-endian: bit k of j corresponds to qubit (n - k)
-    # Our bitstring is [b₁, b₂, ..., bₙ] where bₖ is qubit k
-    # Index = Σₖ bₖ × 2^(n-k) + 1
+    # Both clifford_to_matrix and user-facing bitstrings use little-endian:
+    # bitstring[k] is qubit k, index = Σₖ bitstring[k] × 2^(k-1)
+
+    # Convert bitstring to index (little-endian)
     b_idx = 1
     for k in 1:n
-        b_idx += bitstring[k] * (1 << (n - k))
+        b_idx += bitstring[k] * (1 << (k - 1))
     end
 
     # ⟨b|C|mps⟩ = Σ_j C_{b,j} ⟨j|mps⟩
@@ -657,8 +657,8 @@ function amplitude(state::CAMPSState, bitstring::Vector{Int})::ComplexF64
         C_bj = C_mat[b_idx, j_idx]
 
         if abs(C_bj) > 1e-15
-            # Convert j_idx back to bitstring (big-endian)
-            j_bits = [(j_idx - 1) >> (n - k) & 1 for k in 1:n]
+            # Convert j_idx to bitstring (little-endian)
+            j_bits = [(j_idx - 1) >> (k - 1) & 1 for k in 1:n]
 
             # Get MPS amplitude ⟨j|mps⟩
             mps_amp = mps_amplitude(state.mps, j_bits, state.sites)
