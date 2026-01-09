@@ -240,7 +240,7 @@ export RzGate, RxGate, RyGate
 # Clifford gate constructors
 export HGate, SGate, SdagGate
 export XGate, YGate, ZGate
-export CNOTGate, CZGate, SWAPGate
+export CNOTGate, CZGate, SWAPGate,XCXGate
 export iSWAPGate, SqrtXGate, SqrtXdagGate, SqrtYGate, SqrtYdagGate
 
 # State type and accessors

@@ -465,6 +465,39 @@ function iSWAPGate(qubit1::Int, qubit2::Int)
     ], [qubit1, qubit2])
 end
 
+# Add this to your CAMPS.jl/src/types.jl
+# Insert after the SWAPGate constructor (around line 340)
+
+"""
+    XCXGate(control::Int, target::Int) -> CliffordGate
+
+Create an XCX (X-controlled-X) gate.
+
+XCX is equivalent to H(control) · CNOT(c,t) · H(control).
+Used in Surface Code circuits for X-type stabilizer measurements.
+
+Transforms:
+- X_c → X_c
+- Z_c → Z_c X_t
+- X_t → X_c X_t
+- Z_t → Z_t
+
+# Example
+```julia
+xcx = XCXGate(1, 2)  # XCX with control=1, target=2
+```
+"""
+function XCXGate(control::Int, target::Int)
+    control != target || throw(ArgumentError("control and target must be different qubits"))
+    # XCX = H(c) · CNOT(c,t) · H(c)
+    # Store as composite Clifford gate
+    CliffordGate([
+        (:H, control),
+        (:CNOT, control, target),
+        (:H, control)
+    ], [control, target])
+end
+
 """
     SqrtXGate(qubit::Int) -> CliffordGate
 

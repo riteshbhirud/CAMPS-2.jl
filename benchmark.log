@@ -1,0 +1,176 @@
+
+[31281] signal 15: Terminated: 15
+in expression starting at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:340
+__psynch_cvwait at /usr/lib/system/libsystem_kernel.dylib (unknown line)
+unknown function (ip: 0x0) at (unknown file)
+jl_gc_small_alloc_inner at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/gc-stock.c:735 [inlined]
+jl_gc_small_alloc_noinline at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/gc-stock.c:783 [inlined]
+jl_gc_alloc_ at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/gc-stock.c:797
+jl_alloc_genericmemory_unchecked at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/genericmemory.c:41
+GenericMemory at ./boot.jl:588 [inlined]
+Array at ./boot.jl:647 [inlined]
+BitArray at ./bitarray.jl:37 [inlined]
+BitArray at ./bitarray.jl:71 [inlined]
+BitArray at ./bitarray.jl:509 [inlined]
+BitArray at ./bitarray.jl:506 [inlined]
+#Tableau##2 at ./none (unknown line)
+iterate at ./generator.jl:48
+unknown function (ip: 0x1659c0143) at (unknown file)
+jl_f__apply_iterate at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/builtins.c:841
+Tableau at /Users/ritesh/.julia/packages/QuantumClifford/qYfff/src/QuantumClifford.jl:189 [inlined]
+Tableau at /Users/ritesh/.julia/packages/QuantumClifford/qYfff/src/QuantumClifford.jl:200 [inlined]
+#one#259 at /Users/ritesh/.julia/packages/QuantumClifford/qYfff/src/useful_states.jl:29
+one at /Users/ritesh/.julia/packages/QuantumClifford/qYfff/src/useful_states.jl:23 [inlined]
+one at /Users/ritesh/.julia/packages/QuantumClifford/qYfff/src/useful_states.jl:36 [inlined]
+clifford_to_matrix at /Users/ritesh/Downloads/CAMPS 2.jl/src/two_qubit_cliffords.jl:281
+cliffords_equal at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1265 [inlined]
+decompose_as_tensor_product at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1245
+search_with_entangling_class at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1184
+find_clifford_decomposition at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1125
+decompose_two_qubit_clifford at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1094
+#apply_clifford_to_destabilizer!#62 at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1021
+apply_clifford_to_destabilizer! at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1018
+unknown function (ip: 0x1785941f7) at (unknown file)
+#obd_sweep!#61 at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:979
+obd_sweep! at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:920
+unknown function (ip: 0x177d141bf) at (unknown file)
+#obd!#68 at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1630
+obd! at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1601 [inlined]
+#apply_rotation_with_obd!#69 at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1701
+apply_rotation_with_obd! at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1687 [inlined]
+#apply_rotation_hybrid!#70 at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1757 [inlined]
+apply_rotation_hybrid! at /Users/ritesh/Downloads/CAMPS 2.jl/src/obd.jl:1739 [inlined]
+#apply_gate!#75 at /Users/ritesh/Downloads/CAMPS 2.jl/src/simulation.jl:85
+apply_gate! at /Users/ritesh/Downloads/CAMPS 2.jl/src/simulation.jl:70 [inlined]
+#run_single_circuit#1 at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:91
+run_single_circuit at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:68 [inlined]
+#run_minimal_benchmark#2 at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:204
+run_minimal_benchmark at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:135 [inlined]
+main at /Users/ritesh/Downloads/CAMPS 2.jl/benchmarks/run_minimal_benchmark.jl:330
+unknown function (ip: 0x1122f833f) at (unknown file)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/./julia.h:2391 [inlined]
+do_call at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/interpreter.c:123
+eval_stmt_value at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/interpreter.c:194
+eval_body at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/interpreter.c:689
+jl_interpret_toplevel_thunk at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/interpreter.c:898
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/toplevel.c:1035
+jl_toplevel_eval_flex at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/toplevel.c:975
+ijl_toplevel_eval at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/toplevel.c:1047 [inlined]
+ijl_toplevel_eval_in at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/toplevel.c:1092
+eval at ./boot.jl:489
+include_string at ./loading.jl:2870
+_include at ./loading.jl:2930
+include at ./Base.jl:306
+exec_options at ./client.jl:317
+_start at ./client.jl:550
+jfptr__start_38197.1 at /Users/ritesh/.julia/juliaup/julia-1.12.3+0.aarch64.apple.darwin14/lib/julia/sys.dylib (unknown line)
+jl_apply at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/./julia.h:2391 [inlined]
+true_main at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/jlapi.c:971
+jl_repl_entrypoint at /Users/julia/.julia/scratchspaces/a66863c6-20e8-4ff4-8a62-49f30b1f605e/agent-cache/default-honeycrisp-R17H3W25T9.0/build/default-honeycrisp-R17H3W25T9-0/julialang/julia-release-1-dot-12/src/jlapi.c:1139
+unknown function (ip: 0x0) at (unknown file)
+Allocations: 2437989798332 (Pool: 2437989796925; Big: 1407); GC: 301924
+Mode: standard
+
+Testing all 9 circuit families...
+
+✓ Random Clifford+T (Brick-wall)           -  56 Cliffords,  8 T-gates
+✓ Random Clifford+T (All-to-all)           - 128 Cliffords,  8 T-gates
+✓ Bernstein-Vazirani                       -  20 Cliffords,  8 T-gates
+✓ Simon's Algorithm                        -  18 Cliffords,  8 T-gates
+✓ Deutsch-Jozsa                            -  26 Cliffords,  8 T-gates
+✓ GHZ State                                -   8 Cliffords,  8 T-gates
+✓ Bell State / EPR Pairs                   -   8 Cliffords,  8 T-gates
+✓ Graph State                              -  32 Cliffords,  8 T-gates
+✓ Cluster State (1D)                       -  29 Cliffords,  8 T-gates
+
+All 9 families tested successfully!
+
+======================================================================
+MINIMAL BENCHMARK - 9 EXACT CIRCUIT FAMILIES
+======================================================================
+
+Total experiments: 1080
+Circuit families: 9 (all exact)
+
+Starting benchmarks...
+----------------------------------------------------------------------
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 8.74s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD= 75.0%, χ=   1, ν= 3, 4.55s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 1.28s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 0.00s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD= 75.0%, χ=   1, ν= 3, 0.01s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 0.00s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 0.00s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 0.01s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD=100.0%, χ=   1, ν= 4, 0.00s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 4): OFD= 75.0%, χ=   2, ν= 3, 0.14s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   2, ν= 7, 0.02s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD=100.0%, χ=   1, ν= 8, 0.00s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 75.0%, χ=   4, ν= 6, 129.11s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   2, ν= 7, 125.99s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   4, ν= 7, 104.43s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   2, ν= 7, 108.46s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   1, ν= 7, 0.02s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   1, ν= 7, 0.01s
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 50.0%, χ=   2, ν= 4, 77.94s
+[   20/ 1080] ETA: 495.4 min
+  Random Clifford+T (Brick-wall)      (n= 8, t= 8): OFD= 87.5%, χ=   2, ν= 7, 48.51s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=  16, ν= 8, 588.93s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=   4, ν= 8, 91.45s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=   4, ν= 8, 404.13s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 58.3%, χ=  16, ν= 7, 508.07s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=  16, ν= 8, 550.83s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=  16, ν= 8, 476.52s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=   8, ν= 8, 326.61s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 58.3%, χ=  16, ν= 7, 634.65s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=  16, ν= 8, 333.98s
+  Random Clifford+T (Brick-wall)      (n= 8, t=12): OFD= 66.7%, χ=  16, ν= 8, 370.78s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 1076.77s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 781.26s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 869.74s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 598.41s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 672.74s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 497.39s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 988.14s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 781.79s
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 709.94s
+[   40/ 1080] ETA: 5144.3 min
+  Random Clifford+T (Brick-wall)      (n= 8, t=16): OFD= 50.0%, χ=  16, ν= 8, 932.63s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.44s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD= 83.3%, χ=   1, ν= 5, 0.60s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.01s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD= 66.7%, χ=   2, ν= 4, 0.06s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD= 83.3%, χ=   1, ν= 5, 0.06s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD= 83.3%, χ=   1, ν= 5, 0.03s
+  Random Clifford+T (Brick-wall)      (n=12, t= 6): OFD=100.0%, χ=   1, ν= 6, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 75.0%, χ=   8, ν= 9, 333.70s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 83.3%, χ=   4, ν=10, 192.84s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD=100.0%, χ=   1, ν=12, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 91.7%, χ=   4, ν=11, 180.99s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD=100.0%, χ=   1, ν=12, 0.02s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD=100.0%, χ=   1, ν=12, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD=100.0%, χ=   1, ν=12, 0.00s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 91.7%, χ=   2, ν=11, 189.83s
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 91.7%, χ=   4, ν=11, 133.87s
+[   60/ 1080] ETA: 3920.4 min
+  Random Clifford+T (Brick-wall)      (n=12, t=12): OFD= 83.3%, χ=   4, ν=10, 145.46s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 1114.89s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 1078.69s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 853.87s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  48, ν=12, 642.65s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 952.29s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 750.88s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 1094.90s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 650.74s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 1224.53s
+  Random Clifford+T (Brick-wall)      (n=12, t=18): OFD= 66.7%, χ=  64, ν=12, 891.29s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 2138.75s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 1590.83s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 2082.81s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 2059.23s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 1470.48s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 2163.68s
+  Random Clifford+T (Brick-wall)      (n=12, t=24): OFD= 50.0%, χ=  64, ν=12, 2258.73s

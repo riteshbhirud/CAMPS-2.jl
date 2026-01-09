@@ -1,0 +1,51 @@
+======================================================================
+OFD SUCCESS PREDICTION - ML RESULTS SUMMARY
+======================================================================
+
+MODEL PERFORMANCE:
+----------------------------------------------------------------------
+
+Random Forest:
+  Accuracy:  0.8846
+  Precision: 0.7843
+  Recall:    0.9091
+  F1 Score:  0.8421
+  ROC AUC:   0.9662
+
+Gradient Boosting:
+  Accuracy:  0.8769
+  Precision: 0.7917
+  Recall:    0.8636
+  F1 Score:  0.8261
+  ROC AUC:   0.9585
+
+Logistic Regression:
+  Accuracy:  0.8154
+  Precision: 0.7273
+  Recall:    0.7273
+  F1 Score:  0.7273
+  ROC AUC:   0.9091
+
+SVM (RBF):
+  Accuracy:  0.9231
+  Precision: 0.8696
+  Recall:    0.9091
+  F1 Score:  0.8889
+  ROC AUC:   0.9617
+
+
+FEATURE IMPORTANCE (Random Forest):
+----------------------------------------------------------------------
+ 1. t_density                      0.208145
+ 2. n_t_gates                      0.172844
+ 3. spatial_uniformity             0.097632
+ 4. n_gates                        0.076525
+ 5. family_encoded                 0.076398
+ 6. std_clifford_depth             0.066145
+ 7. avg_light_cone_width           0.062263
+ 8. depth_variance                 0.055999
+ 9. avg_clifford_depth             0.053641
+10. max_clifford_depth             0.042383
+11. max_light_cone_width           0.041200
+12. min_clifford_depth             0.029925
+13. n_qubits                       0.016901
