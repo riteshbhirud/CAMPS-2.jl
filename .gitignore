@@ -25,3 +25,5 @@ Thumbs.db
 # Coverage
 /coverage/
 lcov.info
+results/complete_benchmark/aggregated_20260110_175358.csv
+results/complete_benchmark/results_20260110_175358.csv

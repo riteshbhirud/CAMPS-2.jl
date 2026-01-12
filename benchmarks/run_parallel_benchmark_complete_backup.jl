@@ -27,13 +27,7 @@ Pkg.activate(camps_dir)
 
 # Determine number of workers
 const N_PHYSICAL_CORES = Sys.CPU_THREADS ÷ 2
-
-# Check for environment variable override (useful for SLURM)
-const N_WORKERS = if haskey(ENV, "JULIA_NUM_WORKERS")
-    parse(Int, ENV["JULIA_NUM_WORKERS"])
-else
-    max(1, N_PHYSICAL_CORES - 1)
-end
+const N_WORKERS = max(1, N_PHYSICAL_CORES - 1)
 
 println("="^80)
 println("CPU-PARALLEL BENCHMARK - ALL 14 CIRCUIT FAMILIES")
@@ -131,7 +125,7 @@ Execute single circuit with comprehensive error handling and debugging.
         # Recreate family from name on worker (avoids serialization issues)
         family = get_family_from_name(family_name)
         # Debug: Show we started
-        println("Worker $(myid()): Starting $(family_name) with $(params[:n_qubits]) qubits")
+         println("Worker $(myid()): Starting $(family_name) with $(params[:n_qubits]) qubits")
         
         # Set random seed for reproducibility
         Random.seed!(params[:seed])
@@ -330,55 +324,6 @@ end
 #==============================================================================#
 
 """
-Generate ULTRA-FAST test experiments (14 circuits, one per family).
-Uses minimal parameters for fastest execution.
-"""
-function generate_ultrafast_phase1()
-    experiments = []
-    seed_base = 1000
-    
-    # 1 circuit per Phase 1 family with minimal parameters
-    families_and_params = [
-        (RandomBrickwallCliffordT(), Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => seed_base)),
-        (RandomAllToAllCliffordT(), Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_layers => 16, :seed => seed_base+1)),
-        (BernsteinVaziraniCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+2)),
-        (SimonCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+3)),
-        (DeutschJozsaCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :function_type => :balanced, :seed => seed_base+4)),
-        (GHZStateCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+5)),
-        (BellStateCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+6)),
-        (GraphStateCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :edge_probability => 0.3, :seed => seed_base+7)),
-        (ClusterStateCircuit(), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+8))
-    ]
-    
-    for (family, params) in families_and_params
-        family_name = get_name(family)
-        push!(experiments, (family_name=family_name, params=params))
-    end
-    
-    return experiments
-end
-
-function generate_ultrafast_phase2()
-    experiments = []
-    seed_base = 2000
-    
-    # 1 circuit per Phase 2 family with MINIMAL parameters (fast!)
-    phase2_configs = [
-        (get_name(QAOAMaxCutCircuit()), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base)),
-        (get_name(SurfaceCodeFamily()), Dict(:n_qubits => 8, :n_t_gates => 4, :seed => seed_base+1)),
-        (get_name(QFTFamily()), Dict(:n_qubits => 4, :density => :low, :seed => seed_base+2)),
-        (get_name(GroverFamily()), Dict(:n_qubits => 4, :density => :quarter, :seed => seed_base+3)),  # CRITICAL: quarter density, not full!
-        (get_name(VQEFamily()), Dict(:n_qubits => 4, :layers => 1, :seed => seed_base+4))
-    ]
-    
-    for (family_name, params) in phase2_configs
-        push!(experiments, (family_name=family_name, params=params))
-    end
-    
-    return experiments
-end
-
-"""
 Generate experiment specifications for Phase 1 families (9 families).
 
 Parameters:
@@ -541,63 +486,24 @@ end
 Run complete parallel benchmark across all 14 families.
 
 Modes:
-- "test": Quick test (126 circuits)
-- "quick": Fast run (378 circuits)
+- "test": Quick test (18 circuits)
+- "quick": Fast run (126 circuits)
 - "medium": Standard run (1,008 circuits) ← RECOMMENDED
 - "full": Extended run with more realizations
-
-Subsets (allows splitting into multiple runs for time limits):
-- "all": All 14 families (1,008 circuits) - default
-- "phase1": Phase 1 only - 9 basic families (648 circuits)
-- "qaoa": QAOA MaxCut only (72 circuits)
-- "surface": Surface Code only (72 circuits)
-- "qft": Quantum Fourier Transform only (72 circuits)
-- "grover": Grover Search only (72 circuits)
-- "vqe": VQE Hardware-Efficient only (72 circuits)
-
-All subsets maintain exact same experiment parameters and can be combined
-into a single dataset for ML training.
 """
 function run_parallel_benchmark_complete(;
     mode = "medium",
-    subset = "all",
     output_dir = "results/complete_benchmark",
     verbose = true)
     
     println("="^80)
-    if subset == "all"
-        println("PARALLEL BENCHMARK - ALL 14 CIRCUIT FAMILIES")
-    elseif subset == "phase1"
-        println("PARALLEL BENCHMARK - PHASE 1 ONLY (9 Basic Families)")
-    elseif subset == "qaoa"
-        println("PARALLEL BENCHMARK - QAOA MAXCUT ONLY")
-    elseif subset == "surface"
-        println("PARALLEL BENCHMARK - SURFACE CODE ONLY")
-    elseif subset == "qft"
-        println("PARALLEL BENCHMARK - QUANTUM FOURIER TRANSFORM ONLY")
-    elseif subset == "grover"
-        println("PARALLEL BENCHMARK - GROVER SEARCH ONLY")
-    elseif subset == "vqe"
-        println("PARALLEL BENCHMARK - VQE HARDWARE-EFFICIENT ONLY")
-    end
-    
-    if mode == "savetest"
-        println("*** SAVE TEST MODE - 1 CIRCUIT ONLY FOR CSV VERIFICATION ***")
-    end
-    
+    println("PARALLEL BENCHMARK - ALL 14 CIRCUIT FAMILIES")
     println("="^80)
     println("Mode: ", mode)
-    println("Subset: ", subset)
     println()
     
     # Set parameters based on mode
-    n_realizations = if mode == "savetest"
-        # Save test: 1 circuit per subset to verify CSV saving works
-        "savetest"  # Special marker
-    elseif mode == "ultrafast"
-        # Ultra-fast: 1 circuit per family only (14 total)
-        "ultrafast"  # Special marker
-    elseif mode == "test"
+    n_realizations = if mode == "test"
         1  # Quick test
     elseif mode == "quick"
         3
@@ -606,87 +512,15 @@ function run_parallel_benchmark_complete(;
     elseif mode == "full"
         10  # Extended: 1,260 circuits
     else
-        error("Unknown mode: $mode. Use 'savetest', 'ultrafast', 'test', 'quick', 'medium', or 'full'")
+        error("Unknown mode: $mode. Use 'test', 'quick', 'medium', or 'full'")
     end
     
     mkpath(output_dir)
     
     # Generate experiments
     println("Generating experiment specifications...")
-    
-    if n_realizations == "savetest"
-        # Save test mode: 1 circuit only for quick CSV verification
-        if subset == "phase1"
-            # Just one Phase 1 family, one circuit
-            experiments = [(family_name="Random Clifford+T (Brick-wall)", 
-                          params=Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => 1000))]
-        elseif subset == "qaoa"
-            experiments = [(family_name="QAOA MaxCut (p=1, 3-regular)",
-                          params=Dict(:n_qubits => 8, :n_t_gates => 4, :seed => 2000))]
-        elseif subset == "surface"
-            experiments = [(family_name="Surface Code",
-                          params=Dict(:n_qubits => 8, :n_t_gates => 4, :seed => 2001))]
-        elseif subset == "qft"
-            experiments = [(family_name="Quantum Fourier Transform",
-                          params=Dict(:n_qubits => 4, :density => :low, :seed => 2002))]
-        elseif subset == "grover"
-            experiments = [(family_name="Grover Search",
-                          params=Dict(:n_qubits => 4, :density => :quarter, :seed => 2003))]
-        elseif subset == "vqe"
-            experiments = [(family_name="VQE Hardware-Efficient Ansatz",
-                          params=Dict(:n_qubits => 4, :layers => 1, :seed => 2004))]
-        else  # all
-            experiments = [(family_name="Random Clifford+T (Brick-wall)", 
-                          params=Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => 1000))]
-        end
-        phase1_experiments = subset == "phase1" ? experiments : []
-        phase2_experiments = subset != "phase1" ? experiments : []
-    elseif n_realizations == "ultrafast"
-        # Ultra-fast mode: 1 circuit per family, minimal parameters
-        phase1_experiments = generate_ultrafast_phase1()
-        phase2_experiments = generate_ultrafast_phase2()
-    else
-        phase1_experiments = generate_phase1_experiments(n_realizations)
-        phase2_experiments = generate_phase2_experiments(n_realizations)
-    end
-    
-    # Filter experiments based on subset
-    if subset == "all"
-        # No filtering - include everything
-        println("Subset: 'all' - Including all 14 families (1,008 circuits)")
-    elseif subset == "phase1"
-        # Phase 1 only - all 9 basic families
-        phase2_experiments = []  # Exclude all Phase 2
-        println("Subset: 'phase1' - Including Phase 1 only (648 circuits)")
-    elseif subset == "qaoa"
-        # QAOA only
-        phase1_experiments = []
-        phase2_experiments = filter(exp -> exp.family_name == "QAOA MaxCut (p=1, 3-regular)", phase2_experiments)
-        println("Subset: 'qaoa' - Including QAOA MaxCut only (72 circuits)")
-    elseif subset == "surface"
-        # Surface Code only
-        phase1_experiments = []
-        phase2_experiments = filter(exp -> exp.family_name == "Surface Code", phase2_experiments)
-        println("Subset: 'surface' - Including Surface Code only (72 circuits)")
-    elseif subset == "qft"
-        # QFT only
-        phase1_experiments = []
-        phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform", phase2_experiments)
-        println("Subset: 'qft' - Including Quantum Fourier Transform only (72 circuits)")
-    elseif subset == "grover"
-        # Grover only
-        phase1_experiments = []
-        phase2_experiments = filter(exp -> exp.family_name == "Grover Search", phase2_experiments)
-        println("Subset: 'grover' - Including Grover Search only (72 circuits)")
-    elseif subset == "vqe"
-        # VQE only
-        phase1_experiments = []
-        phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz", phase2_experiments)
-        println("Subset: 'vqe' - Including VQE Hardware-Efficient Ansatz only (72 circuits)")
-    else
-        error("Unknown subset: $subset. Use 'all', 'phase1', 'qaoa', 'surface', 'qft', 'grover', or 'vqe'")
-    end
-    
+    phase1_experiments = generate_phase1_experiments(n_realizations)
+    phase2_experiments = generate_phase2_experiments(n_realizations)
     experiments = vcat(phase1_experiments, phase2_experiments)
     
     n_total = length(experiments)
@@ -799,24 +633,10 @@ function run_parallel_benchmark_complete(;
     
     # Flatten extra_metadata into separate columns
     if "extra_metadata" in names(df)
-        # First pass: collect all metadata keys that actually exist
-        metadata_keys = Set{String}()
         for row in eachrow(df)
             if !ismissing(row.extra_metadata) && !isnothing(row.extra_metadata)
-                union!(metadata_keys, keys(row.extra_metadata))
-            end
-        end
-        
-        # Create columns with proper defaults
-        for key in metadata_keys
-            df[!, Symbol(key)] = fill("", nrow(df))  # Initialize with empty strings
-        end
-        
-        # Second pass: fill in actual values
-        for (i, row) in enumerate(eachrow(df))
-            if !ismissing(row.extra_metadata) && !isnothing(row.extra_metadata)
                 for (k, v) in row.extra_metadata
-                    df[i, Symbol(k)] = string(v)  # Convert to string for CSV
+                    df[row, Symbol(k)] = v
                 end
             end
         end
@@ -941,56 +761,26 @@ end
 # ENTRY POINT
 #==============================================================================#
 
-function main(mode::String="medium", subset::String="all")
+function main(mode::String="medium")
     println("CAMPS.jl Complete Benchmark Suite")
     println("Mode: $mode")
-    println("Subset: $subset")
     println()
     
-    if !(mode in ["savetest", "ultrafast", "test", "quick", "medium", "full"])
+    if !(mode in ["test", "quick", "medium", "full"])
         println("ERROR: Unknown mode '$mode'")
         println("Available modes:")
-        println("  savetest  - Save test (1 circuit, ~30 sec) ← TEST CSV SAVING")
-        println("  ultrafast - Ultra-fast test (14 circuits, ~5 min) ← DEBUG/VERIFY")
-        println("  test   - Quick test (126 circuits, ~30 hours with Grover)")
+        println("  test   - Quick test (18 circuits, ~2 minutes)")
         println("  quick  - Fast run (126 circuits, ~15 minutes)")
-        println("  medium - Standard run (1,008 circuits, ~15-20 hours) ← RECOMMENDED")
-        println("  full   - Extended run (1,260 circuits, ~20-25 hours)")
+        println("  medium - Standard run (1,008 circuits, ~2-3 hours) ← RECOMMENDED")
+        println("  full   - Extended run (1,260 circuits, ~3-4 hours)")
         return
     end
     
-    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "grover", "vqe"])
-        println("ERROR: Unknown subset '$subset'")
-        println()
-        println("Available subsets:")
-        println("  all     - All 14 families (1,008 circuits) ← DEFAULT")
-        println("  phase1  - Phase 1 only: 9 basic families (648 circuits)")
-        println("  qaoa    - QAOA MaxCut only (72 circuits)")
-        println("  surface - Surface Code only (72 circuits)")
-        println("  qft     - Quantum Fourier Transform only (72 circuits)")
-        println("  grover  - Grover Search only (72 circuits)")
-        println("  vqe     - VQE Hardware-Efficient only (72 circuits)")
-        println()
-        println("USAGE:")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium phase1")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qaoa")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium surface")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover")
-        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe")
-        println()
-        println("COMBINING RESULTS:")
-        println("  Run all subsets, then combine CSV files with combine_results.jl")
-        println("  Example: combine_results.jl phase1.csv qaoa.csv surface.csv ... combined.csv")
-        return
-    end
-    
-    run_parallel_benchmark_complete(mode=mode, subset=subset, verbose=true)
+    run_parallel_benchmark_complete(mode=mode, verbose=true)
 end
 
 # Auto-run if executed as script
 if abspath(PROGRAM_FILE) == @__FILE__
     mode = length(ARGS) >= 1 ? ARGS[1] : "medium"
-    subset = length(ARGS) >= 2 ? ARGS[2] : "all"
-    main(mode, subset)
+    main(mode)
 end
