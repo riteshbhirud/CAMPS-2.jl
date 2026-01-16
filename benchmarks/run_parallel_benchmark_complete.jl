@@ -483,8 +483,10 @@ function generate_phase2_experiments(n_realizations=8)
     end
     
     # QFT (72 circuits)
+    # Can be split into 3 parts: part=1 (n=4), part=2 (n=6), part=3 (n=8)
     qft_name = get_name(QFTFamily())
-    for n in [4, 6, 8]
+    qft_n_range = [4, 6, 8]
+    for n in qft_n_range
         for density in [:low, :medium, :high]
             for real in 1:n_realizations
                 seed = Int(hash(("QFT", n, density, real)) % UInt32)
@@ -552,6 +554,9 @@ Subsets (allows splitting into multiple runs for time limits):
 - "qaoa": QAOA MaxCut only (72 circuits)
 - "surface": Surface Code only (72 circuits)
 - "qft": Quantum Fourier Transform only (72 circuits)
+- "qft1": QFT Part 1 - n=4 qubits only (24 circuits)
+- "qft2": QFT Part 2 - n=6 qubits only (24 circuits)
+- "qft3": QFT Part 3 - n=8 qubits only (24 circuits)
 - "grover": Grover Search only (72 circuits)
 - "vqe": VQE Hardware-Efficient only (72 circuits)
 
@@ -575,6 +580,12 @@ function run_parallel_benchmark_complete(;
         println("PARALLEL BENCHMARK - SURFACE CODE ONLY")
     elseif subset == "qft"
         println("PARALLEL BENCHMARK - QUANTUM FOURIER TRANSFORM ONLY")
+    elseif subset == "qft1"
+        println("PARALLEL BENCHMARK - QFT PART 1/3 (n=4 qubits)")
+    elseif subset == "qft2"
+        println("PARALLEL BENCHMARK - QFT PART 2/3 (n=6 qubits)")
+    elseif subset == "qft3"
+        println("PARALLEL BENCHMARK - QFT PART 3/3 (n=8 qubits)")
     elseif subset == "grover"
         println("PARALLEL BENCHMARK - GROVER SEARCH ONLY")
     elseif subset == "vqe"
@@ -618,7 +629,7 @@ function run_parallel_benchmark_complete(;
         # Save test mode: 1 circuit only for quick CSV verification
         if subset == "phase1"
             # Just one Phase 1 family, one circuit
-            experiments = [(family_name="Random Clifford+T (Brick-wall)", 
+            experiments = [(family_name="Random Clifford+T (Brick-wall)",
                           params=Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => 1000))]
         elseif subset == "qaoa"
             experiments = [(family_name="QAOA MaxCut (p=1, 3-regular)",
@@ -626,9 +637,15 @@ function run_parallel_benchmark_complete(;
         elseif subset == "surface"
             experiments = [(family_name="Surface Code",
                           params=Dict(:n_qubits => 8, :n_t_gates => 4, :seed => 2001))]
-        elseif subset == "qft"
+        elseif subset == "qft" || subset == "qft1"
             experiments = [(family_name="Quantum Fourier Transform",
                           params=Dict(:n_qubits => 4, :density => :low, :seed => 2002))]
+        elseif subset == "qft2"
+            experiments = [(family_name="Quantum Fourier Transform",
+                          params=Dict(:n_qubits => 6, :density => :low, :seed => 2002))]
+        elseif subset == "qft3"
+            experiments = [(family_name="Quantum Fourier Transform",
+                          params=Dict(:n_qubits => 8, :density => :low, :seed => 2002))]
         elseif subset == "grover"
             experiments = [(family_name="Grover Search",
                           params=Dict(:n_qubits => 4, :density => :quarter, :seed => 2003))]
@@ -636,7 +653,7 @@ function run_parallel_benchmark_complete(;
             experiments = [(family_name="VQE Hardware-Efficient Ansatz",
                           params=Dict(:n_qubits => 4, :layers => 1, :seed => 2004))]
         else  # all
-            experiments = [(family_name="Random Clifford+T (Brick-wall)", 
+            experiments = [(family_name="Random Clifford+T (Brick-wall)",
                           params=Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => 1000))]
         end
         phase1_experiments = subset == "phase1" ? experiments : []
@@ -669,10 +686,25 @@ function run_parallel_benchmark_complete(;
         phase2_experiments = filter(exp -> exp.family_name == "Surface Code", phase2_experiments)
         println("Subset: 'surface' - Including Surface Code only (72 circuits)")
     elseif subset == "qft"
-        # QFT only
+        # QFT only - all 72 circuits
         phase1_experiments = []
         phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform", phase2_experiments)
         println("Subset: 'qft' - Including Quantum Fourier Transform only (72 circuits)")
+    elseif subset == "qft1"
+        # QFT Part 1 - n=4 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform" && exp.params[:n_qubits] == 4, phase2_experiments)
+        println("Subset: 'qft1' - Including QFT Part 1/3 (n=4, 24 circuits)")
+    elseif subset == "qft2"
+        # QFT Part 2 - n=6 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform" && exp.params[:n_qubits] == 6, phase2_experiments)
+        println("Subset: 'qft2' - Including QFT Part 2/3 (n=6, 24 circuits)")
+    elseif subset == "qft3"
+        # QFT Part 3 - n=8 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform" && exp.params[:n_qubits] == 8, phase2_experiments)
+        println("Subset: 'qft3' - Including QFT Part 3/3 (n=8, 24 circuits)")
     elseif subset == "grover"
         # Grover only
         phase1_experiments = []
@@ -684,7 +716,7 @@ function run_parallel_benchmark_complete(;
         phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz", phase2_experiments)
         println("Subset: 'vqe' - Including VQE Hardware-Efficient Ansatz only (72 circuits)")
     else
-        error("Unknown subset: $subset. Use 'all', 'phase1', 'qaoa', 'surface', 'qft', 'grover', or 'vqe'")
+        error("Unknown subset: $subset. Use 'all', 'phase1', 'qaoa', 'surface', 'qft', 'qft1', 'qft2', 'qft3', 'grover', or 'vqe'")
     end
     
     experiments = vcat(phase1_experiments, phase2_experiments)
@@ -959,7 +991,7 @@ function main(mode::String="medium", subset::String="all")
         return
     end
     
-    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "grover", "vqe"])
+    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "qft1", "qft2", "qft3", "grover", "vqe"])
         println("ERROR: Unknown subset '$subset'")
         println()
         println("Available subsets:")
@@ -968,6 +1000,9 @@ function main(mode::String="medium", subset::String="all")
         println("  qaoa    - QAOA MaxCut only (72 circuits)")
         println("  surface - Surface Code only (72 circuits)")
         println("  qft     - Quantum Fourier Transform only (72 circuits)")
+        println("  qft1    - QFT Part 1/3: n=4 qubits (24 circuits)")
+        println("  qft2    - QFT Part 2/3: n=6 qubits (24 circuits)")
+        println("  qft3    - QFT Part 3/3: n=8 qubits (24 circuits)")
         println("  grover  - Grover Search only (72 circuits)")
         println("  vqe     - VQE Hardware-Efficient only (72 circuits)")
         println()
@@ -976,12 +1011,17 @@ function main(mode::String="medium", subset::String="all")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qaoa")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium surface")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft1")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft2")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft3")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe")
         println()
         println("COMBINING RESULTS:")
-        println("  Run all subsets, then combine CSV files with combine_results.jl")
-        println("  Example: combine_results.jl phase1.csv qaoa.csv surface.csv ... combined.csv")
+        println("  For QFT split experiments, combine parts 1-3:")
+        println("    julia combine_results.jl qft1.csv qft2.csv qft3.csv qft_combined.csv")
+        println("  For all subsets, combine all CSV files:")
+        println("    julia combine_results.jl phase1.csv qaoa.csv surface.csv qft.csv grover.csv vqe.csv combined.csv")
         return
     end
     
