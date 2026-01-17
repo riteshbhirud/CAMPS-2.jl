@@ -1,12 +1,13 @@
 #!/usr/bin/env julia
 """
-Verification script for QFT split experiments.
+Verification script for QFT and VQE split experiments.
 
 This script verifies that:
 1. qft1 + qft2 + qft3 = qft (exactly same experiments)
-2. All seeds are deterministic and reproducible
-3. Each part has exactly 24 circuits
-4. Total coverage is maintained (72 circuits)
+2. vqe1 + vqe2 + vqe3 = vqe (exactly same experiments)
+3. All seeds are deterministic and reproducible
+4. Each part has exactly 24 circuits
+5. Total coverage is maintained (72 circuits each)
 """
 
 using Printf
@@ -17,7 +18,7 @@ using Pkg
 Pkg.activate(camps_dir)
 
 println("="^80)
-println("QFT SPLIT VERIFICATION")
+println("QFT AND VQE SPLIT VERIFICATION")
 println("="^80)
 println()
 
@@ -68,6 +69,50 @@ function generate_qft_experiments_for_subset(subset::String; n_realizations=8)
     return filtered
 end
 
+"""
+Generate VQE experiments for a specific subset.
+This replicates the logic from run_parallel_benchmark_complete.jl
+"""
+function generate_vqe_experiments_for_subset(subset::String; n_realizations=8)
+    vqe_name = "VQE Hardware-Efficient Ansatz"
+    experiments = []
+
+    # Generate all VQE experiments (same as in run_parallel_benchmark_complete.jl)
+    vqe_n_range = [4, 6, 8]
+    for n in vqe_n_range
+        for layers in [1, 2, 4]
+            for real in 1:n_realizations
+                seed = Int(hash(("VQE", n, layers, real)) % UInt32)
+                params = Dict{Symbol, Any}(
+                    :n_qubits => n,
+                    :layers => layers,
+                    :seed => seed
+                )
+                push!(experiments, (family_name=vqe_name, params=params))
+            end
+        end
+    end
+
+    # Filter based on subset
+    if subset == "vqe"
+        # All VQE experiments
+        filtered = experiments
+    elseif subset == "vqe1"
+        # n=4 only
+        filtered = filter(exp -> exp.params[:n_qubits] == 4, experiments)
+    elseif subset == "vqe2"
+        # n=6 only
+        filtered = filter(exp -> exp.params[:n_qubits] == 6, experiments)
+    elseif subset == "vqe3"
+        # n=8 only
+        filtered = filter(exp -> exp.params[:n_qubits] == 8, experiments)
+    else
+        error("Unknown subset: $subset")
+    end
+
+    return filtered
+end
+
 # Generate experiments for each subset
 println("Generating experiments for verification...")
 println()
@@ -77,9 +122,14 @@ qft1 = generate_qft_experiments_for_subset("qft1")
 qft2 = generate_qft_experiments_for_subset("qft2")
 qft3 = generate_qft_experiments_for_subset("qft3")
 
+vqe_full = generate_vqe_experiments_for_subset("vqe")
+vqe1 = generate_vqe_experiments_for_subset("vqe1")
+vqe2 = generate_vqe_experiments_for_subset("vqe2")
+vqe3 = generate_vqe_experiments_for_subset("vqe3")
+
 # Verification tests
 println("VERIFICATION RESULTS:")
-println("-"^80)
+println("="^80)
 
 # Test 1: Circuit counts
 println("1. Circuit Counts:")

@@ -517,8 +517,10 @@ function generate_phase2_experiments(n_realizations=8)
     end
     
     # VQE Hardware-Efficient (72 circuits)
+    # Can be split into 3 parts: part=1 (n=4), part=2 (n=6), part=3 (n=8)
     vqe_name = get_name(VQEFamily())
-    for n in [4, 6, 8]
+    vqe_n_range = [4, 6, 8]
+    for n in vqe_n_range
         for layers in [1, 2, 4]
             for real in 1:n_realizations
                 seed = Int(hash(("VQE", n, layers, real)) % UInt32)
@@ -559,6 +561,9 @@ Subsets (allows splitting into multiple runs for time limits):
 - "qft3": QFT Part 3 - n=8 qubits only (24 circuits)
 - "grover": Grover Search only (72 circuits)
 - "vqe": VQE Hardware-Efficient only (72 circuits)
+- "vqe1": VQE Part 1 - n=4 qubits only (24 circuits)
+- "vqe2": VQE Part 2 - n=6 qubits only (24 circuits)
+- "vqe3": VQE Part 3 - n=8 qubits only (24 circuits)
 
 All subsets maintain exact same experiment parameters and can be combined
 into a single dataset for ML training.
@@ -590,6 +595,12 @@ function run_parallel_benchmark_complete(;
         println("PARALLEL BENCHMARK - GROVER SEARCH ONLY")
     elseif subset == "vqe"
         println("PARALLEL BENCHMARK - VQE HARDWARE-EFFICIENT ONLY")
+    elseif subset == "vqe1"
+        println("PARALLEL BENCHMARK - VQE PART 1/3 (n=4 qubits)")
+    elseif subset == "vqe2"
+        println("PARALLEL BENCHMARK - VQE PART 2/3 (n=6 qubits)")
+    elseif subset == "vqe3"
+        println("PARALLEL BENCHMARK - VQE PART 3/3 (n=8 qubits)")
     end
     
     if mode == "savetest"
@@ -649,9 +660,15 @@ function run_parallel_benchmark_complete(;
         elseif subset == "grover"
             experiments = [(family_name="Grover Search",
                           params=Dict(:n_qubits => 4, :density => :quarter, :seed => 2003))]
-        elseif subset == "vqe"
+        elseif subset == "vqe" || subset == "vqe1"
             experiments = [(family_name="VQE Hardware-Efficient Ansatz",
                           params=Dict(:n_qubits => 4, :layers => 1, :seed => 2004))]
+        elseif subset == "vqe2"
+            experiments = [(family_name="VQE Hardware-Efficient Ansatz",
+                          params=Dict(:n_qubits => 6, :layers => 1, :seed => 2004))]
+        elseif subset == "vqe3"
+            experiments = [(family_name="VQE Hardware-Efficient Ansatz",
+                          params=Dict(:n_qubits => 8, :layers => 1, :seed => 2004))]
         else  # all
             experiments = [(family_name="Random Clifford+T (Brick-wall)",
                           params=Dict(:n_qubits => 8, :n_t_gates => 4, :clifford_depth => 2, :seed => 1000))]
@@ -711,12 +728,27 @@ function run_parallel_benchmark_complete(;
         phase2_experiments = filter(exp -> exp.family_name == "Grover Search", phase2_experiments)
         println("Subset: 'grover' - Including Grover Search only (72 circuits)")
     elseif subset == "vqe"
-        # VQE only
+        # VQE only - all 72 circuits
         phase1_experiments = []
         phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz", phase2_experiments)
         println("Subset: 'vqe' - Including VQE Hardware-Efficient Ansatz only (72 circuits)")
+    elseif subset == "vqe1"
+        # VQE Part 1 - n=4 qubits only (24 circuits: 3 layers × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz" && exp.params[:n_qubits] == 4, phase2_experiments)
+        println("Subset: 'vqe1' - Including VQE Part 1/3 (n=4, 24 circuits)")
+    elseif subset == "vqe2"
+        # VQE Part 2 - n=6 qubits only (24 circuits: 3 layers × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz" && exp.params[:n_qubits] == 6, phase2_experiments)
+        println("Subset: 'vqe2' - Including VQE Part 2/3 (n=6, 24 circuits)")
+    elseif subset == "vqe3"
+        # VQE Part 3 - n=8 qubits only (24 circuits: 3 layers × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "VQE Hardware-Efficient Ansatz" && exp.params[:n_qubits] == 8, phase2_experiments)
+        println("Subset: 'vqe3' - Including VQE Part 3/3 (n=8, 24 circuits)")
     else
-        error("Unknown subset: $subset. Use 'all', 'phase1', 'qaoa', 'surface', 'qft', 'qft1', 'qft2', 'qft3', 'grover', or 'vqe'")
+        error("Unknown subset: $subset. Use 'all', 'phase1', 'qaoa', 'surface', 'qft', 'qft1', 'qft2', 'qft3', 'grover', 'vqe', 'vqe1', 'vqe2', or 'vqe3'")
     end
     
     experiments = vcat(phase1_experiments, phase2_experiments)
@@ -991,7 +1023,7 @@ function main(mode::String="medium", subset::String="all")
         return
     end
     
-    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "qft1", "qft2", "qft3", "grover", "vqe"])
+    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "qft1", "qft2", "qft3", "grover", "vqe", "vqe1", "vqe2", "vqe3"])
         println("ERROR: Unknown subset '$subset'")
         println()
         println("Available subsets:")
@@ -1005,6 +1037,9 @@ function main(mode::String="medium", subset::String="all")
         println("  qft3    - QFT Part 3/3: n=8 qubits (24 circuits)")
         println("  grover  - Grover Search only (72 circuits)")
         println("  vqe     - VQE Hardware-Efficient only (72 circuits)")
+        println("  vqe1    - VQE Part 1/3: n=4 qubits (24 circuits)")
+        println("  vqe2    - VQE Part 2/3: n=6 qubits (24 circuits)")
+        println("  vqe3    - VQE Part 3/3: n=8 qubits (24 circuits)")
         println()
         println("USAGE:")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium phase1")
@@ -1016,10 +1051,15 @@ function main(mode::String="medium", subset::String="all")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft3")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe1")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe2")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe3")
         println()
         println("COMBINING RESULTS:")
         println("  For QFT split experiments, combine parts 1-3:")
         println("    julia combine_results.jl qft1.csv qft2.csv qft3.csv qft_combined.csv")
+        println("  For VQE split experiments, combine parts 1-3:")
+        println("    julia combine_results.jl vqe1.csv vqe2.csv vqe3.csv vqe_combined.csv")
         println("  For all subsets, combine all CSV files:")
         println("    julia combine_results.jl phase1.csv qaoa.csv surface.csv qft.csv grover.csv vqe.csv combined.csv")
         return
