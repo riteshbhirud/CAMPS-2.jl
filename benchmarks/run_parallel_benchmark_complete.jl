@@ -501,8 +501,10 @@ function generate_phase2_experiments(n_realizations=8)
     end
     
     # Grover Search (72 circuits)
+    # Can be split into 3 parts: part=1 (n=4), part=2 (n=6), part=3 (n=8)
     grover_name = get_name(GroverFamily())
-    for n in [4, 6, 8]
+    grover_n_range = [4, 6, 8]
+    for n in grover_n_range
         for density in [:full, :half, :quarter]
             for real in 1:n_realizations
                 seed = Int(hash(("Grover", n, density, real)) % UInt32)
@@ -560,6 +562,9 @@ Subsets (allows splitting into multiple runs for time limits):
 - "qft2": QFT Part 2 - n=6 qubits only (24 circuits)
 - "qft3": QFT Part 3 - n=8 qubits only (24 circuits)
 - "grover": Grover Search only (72 circuits)
+- "grover1": Grover Part 1 - n=4 qubits only (24 circuits)
+- "grover2": Grover Part 2 - n=6 qubits only (24 circuits)
+- "grover3": Grover Part 3 - n=8 qubits only (24 circuits)
 - "vqe": VQE Hardware-Efficient only (72 circuits)
 - "vqe1": VQE Part 1 - n=4 qubits only (24 circuits)
 - "vqe2": VQE Part 2 - n=6 qubits only (24 circuits)
@@ -593,6 +598,12 @@ function run_parallel_benchmark_complete(;
         println("PARALLEL BENCHMARK - QFT PART 3/3 (n=8 qubits)")
     elseif subset == "grover"
         println("PARALLEL BENCHMARK - GROVER SEARCH ONLY")
+    elseif subset == "grover1"
+        println("PARALLEL BENCHMARK - GROVER PART 1/3 (n=4 qubits)")
+    elseif subset == "grover2"
+        println("PARALLEL BENCHMARK - GROVER PART 2/3 (n=6 qubits)")
+    elseif subset == "grover3"
+        println("PARALLEL BENCHMARK - GROVER PART 3/3 (n=8 qubits)")
     elseif subset == "vqe"
         println("PARALLEL BENCHMARK - VQE HARDWARE-EFFICIENT ONLY")
     elseif subset == "vqe1"
@@ -657,9 +668,15 @@ function run_parallel_benchmark_complete(;
         elseif subset == "qft3"
             experiments = [(family_name="Quantum Fourier Transform",
                           params=Dict(:n_qubits => 8, :density => :low, :seed => 2002))]
-        elseif subset == "grover"
+        elseif subset == "grover" || subset == "grover1"
             experiments = [(family_name="Grover Search",
                           params=Dict(:n_qubits => 4, :density => :quarter, :seed => 2003))]
+        elseif subset == "grover2"
+            experiments = [(family_name="Grover Search",
+                          params=Dict(:n_qubits => 6, :density => :quarter, :seed => 2003))]
+        elseif subset == "grover3"
+            experiments = [(family_name="Grover Search",
+                          params=Dict(:n_qubits => 8, :density => :quarter, :seed => 2003))]
         elseif subset == "vqe" || subset == "vqe1"
             experiments = [(family_name="VQE Hardware-Efficient Ansatz",
                           params=Dict(:n_qubits => 4, :layers => 1, :seed => 2004))]
@@ -723,10 +740,25 @@ function run_parallel_benchmark_complete(;
         phase2_experiments = filter(exp -> exp.family_name == "Quantum Fourier Transform" && exp.params[:n_qubits] == 8, phase2_experiments)
         println("Subset: 'qft3' - Including QFT Part 3/3 (n=8, 24 circuits)")
     elseif subset == "grover"
-        # Grover only
+        # Grover only - all 72 circuits
         phase1_experiments = []
         phase2_experiments = filter(exp -> exp.family_name == "Grover Search", phase2_experiments)
         println("Subset: 'grover' - Including Grover Search only (72 circuits)")
+    elseif subset == "grover1"
+        # Grover Part 1 - n=4 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Grover Search" && exp.params[:n_qubits] == 4, phase2_experiments)
+        println("Subset: 'grover1' - Including Grover Part 1/3 (n=4, 24 circuits)")
+    elseif subset == "grover2"
+        # Grover Part 2 - n=6 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Grover Search" && exp.params[:n_qubits] == 6, phase2_experiments)
+        println("Subset: 'grover2' - Including Grover Part 2/3 (n=6, 24 circuits)")
+    elseif subset == "grover3"
+        # Grover Part 3 - n=8 qubits only (24 circuits: 3 densities × 8 realizations)
+        phase1_experiments = []
+        phase2_experiments = filter(exp -> exp.family_name == "Grover Search" && exp.params[:n_qubits] == 8, phase2_experiments)
+        println("Subset: 'grover3' - Including Grover Part 3/3 (n=8, 24 circuits)")
     elseif subset == "vqe"
         # VQE only - all 72 circuits
         phase1_experiments = []
@@ -1023,7 +1055,7 @@ function main(mode::String="medium", subset::String="all")
         return
     end
     
-    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "qft1", "qft2", "qft3", "grover", "vqe", "vqe1", "vqe2", "vqe3"])
+    if !(subset in ["all", "phase1", "qaoa", "surface", "qft", "qft1", "qft2", "qft3", "grover", "grover1", "grover2", "grover3", "vqe", "vqe1", "vqe2", "vqe3"])
         println("ERROR: Unknown subset '$subset'")
         println()
         println("Available subsets:")
@@ -1036,6 +1068,9 @@ function main(mode::String="medium", subset::String="all")
         println("  qft2    - QFT Part 2/3: n=6 qubits (24 circuits)")
         println("  qft3    - QFT Part 3/3: n=8 qubits (24 circuits)")
         println("  grover  - Grover Search only (72 circuits)")
+        println("  grover1 - Grover Part 1/3: n=4 qubits (24 circuits)")
+        println("  grover2 - Grover Part 2/3: n=6 qubits (24 circuits)")
+        println("  grover3 - Grover Part 3/3: n=8 qubits (24 circuits)")
         println("  vqe     - VQE Hardware-Efficient only (72 circuits)")
         println("  vqe1    - VQE Part 1/3: n=4 qubits (24 circuits)")
         println("  vqe2    - VQE Part 2/3: n=6 qubits (24 circuits)")
@@ -1050,6 +1085,9 @@ function main(mode::String="medium", subset::String="all")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft2")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium qft3")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover1")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover2")
+        println("  julia benchmarks/run_parallel_benchmark_complete.jl medium grover3")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe1")
         println("  julia benchmarks/run_parallel_benchmark_complete.jl medium vqe2")
@@ -1058,6 +1096,8 @@ function main(mode::String="medium", subset::String="all")
         println("COMBINING RESULTS:")
         println("  For QFT split experiments, combine parts 1-3:")
         println("    julia combine_results.jl qft1.csv qft2.csv qft3.csv qft_combined.csv")
+        println("  For Grover split experiments, combine parts 1-3:")
+        println("    julia combine_results.jl grover1.csv grover2.csv grover3.csv grover_combined.csv")
         println("  For VQE split experiments, combine parts 1-3:")
         println("    julia combine_results.jl vqe1.csv vqe2.csv vqe3.csv vqe_combined.csv")
         println("  For all subsets, combine all CSV files:")
