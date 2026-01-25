@@ -218,34 +218,37 @@ end
 
 Predict the final bond dimension from twisted Paulis using GF(2) theory.
 
-The prediction formula is: χ = 2^(t_eff - rank(M))
+The prediction formula is: χ = 2^(t - rank(M))
 where:
-- t_eff is the number of NON-DIAGONAL twisted Paulis (those with at least one X or Y)
+- t is the total number of twisted Paulis
 - rank is computed over GF(2)
 
 # Arguments
 - `twisted_paulis::Vector{<:PauliOperator}`: Vector of twisted Pauli operators
 
 # Returns
-- `Int`: Predicted bond dimension
+- `Int`: Predicted bond dimension (upper bound from GF(2) theory)
 
-# Theory
-Pure Z Paulis (diagonal rotations with xbit = [0,0,...,0]) do NOT increase MPS bond
-dimension because diagonal operations don't entangle qubits. Only twisted Paulis
-with X or Y components (non-zero xbit) contribute to bond dimension growth.
+# Theory (Liu & Clark, arXiv:2412.17209)
+The GF(2) matrix M encodes which twisted Paulis have X or Y components:
+- M[k, j] = 1 if twisted Pauli k has X or Y at qubit j
+- M[k, j] = 0 if twisted Pauli k has I or Z at qubit j
 
-The GF(2) matrix M only has non-zero rows for non-diagonal Paulis, so:
-- t_eff = number of non-zero rows in M = number of non-diagonal twisted Paulis
-- rank(M) = number of linearly independent non-diagonal twisted Paulis
-- χ = 2^(t_eff - rank) = bond dimension from entangling T-gates
+The bond dimension bound is exponential in the null space dimension:
+- nullity = t - rank(M) = number of linearly dependent rows
+- χ = 2^nullity
+
+Paulis in the null space cannot be disentangled via OFD and each contributes
+to bond dimension growth. Pure Z Paulis (all-zero xbit rows) have rank 0
+contribution and thus maximize the nullity.
 
 # Example
 ```julia
-# T-gates without Hadamard: twisted Paulis are Z_k (diagonal)
-# xbit = [0,0,...,0] for all → M is all zeros → t_eff = 0, rank = 0 → χ = 1
+# T-gates without Hadamard: twisted Paulis are Z_k
+# xbit = [0,0,...,0] for all → M is all zeros → rank = 0 → χ = 2^t
 
 # T-gates after Hadamard: twisted Paulis are X_k (non-diagonal)
-# xbit = e_k (unit vector) → M = identity → t_eff = t, rank = min(t,n) → χ = 2^max(0,t-n)
+# xbit = e_k (unit vector) → M = identity → rank = min(t,n) → χ = 2^max(0,t-n)
 ```
 """
 function predict_bond_dimension(twisted_paulis::Vector{<:PauliOperator})::Int
@@ -254,20 +257,13 @@ function predict_bond_dimension(twisted_paulis::Vector{<:PauliOperator})::Int
     end
 
     M = build_gf2_matrix(twisted_paulis)
-
-    # Count non-zero rows (non-diagonal twisted Paulis)
-    # Pure Z Paulis have all-zero xbits and don't increase bond dimension
-    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
-
-    if t_eff == 0
-        return 1  # All pure Z Paulis → no entanglement → bond dim = 1
-    end
-
+    t = length(twisted_paulis)
     r = gf2_rank(M)
 
-    # Bond dimension formula: χ = 2^(t_eff - rank)
+    # Bond dimension formula: χ = 2^(t - rank)
+    # This is the upper bound from GF(2) null space theory
     # Cap at 2^62 to avoid Int64 overflow (2^63 is negative in signed int)
-    exponent = t_eff - r
+    exponent = t - r
     if exponent <= 0
         return 1
     elseif exponent >= 62
@@ -286,29 +282,23 @@ Predict bond dimension directly from GF(2) matrix.
 - `M::Matrix{Bool}`: GF(2) matrix (t × n)
 
 # Returns
-- `Int`: Predicted bond dimension
+- `Int`: Predicted bond dimension (upper bound from GF(2) theory)
 
-# Note
-Pure Z rows (all-zero rows) are excluded from the effective T-count since
-diagonal rotations don't increase MPS bond dimension.
+# Theory
+The bond dimension bound is χ = 2^(t - rank) where t is the number of rows.
+This represents the upper bound from GF(2) null space theory (Liu & Clark).
 """
 function predict_bond_dimension(M::Matrix{Bool})::Int
     if isempty(M)
         return 1
     end
 
-    # Count non-zero rows (non-diagonal twisted Paulis)
-    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
-
-    if t_eff == 0
-        return 1  # All pure Z Paulis → no entanglement → bond dim = 1
-    end
-
+    t = size(M, 1)
     r = gf2_rank(M)
 
-    # Bond dimension formula: χ = 2^(t_eff - rank)
+    # Bond dimension formula: χ = 2^(t - rank)
     # Cap at 2^62 to avoid Int64 overflow (2^63 is negative in signed int)
-    exponent = t_eff - r
+    exponent = t - r
     if exponent <= 0
         return 1
     elseif exponent >= 62
@@ -408,17 +398,15 @@ Analyze the GF(2) structure of twisted Paulis.
 # Returns
 - `NamedTuple` with fields:
   - `t::Int`: Total number of T-gates
-  - `t_eff::Int`: Number of non-diagonal T-gates (with X or Y components)
-  - `n_pure_z::Int`: Number of pure Z Paulis (diagonal, don't increase bond dim)
   - `n::Int`: Number of qubits
   - `rank::Int`: GF(2) rank
-  - `nullity::Int`: t_eff - rank (bond dimension exponent)
-  - `predicted_chi::Int`: 2^nullity
+  - `nullity::Int`: t - rank (bond dimension exponent, null space dimension)
+  - `predicted_chi::Int`: 2^nullity (upper bound from GF(2) theory)
   - `independent_rows::Vector{Int}`: Indices of linearly independent rows
 """
 function analyze_gf2_structure(twisted_paulis::Vector{<:PauliOperator})
     if isempty(twisted_paulis)
-        return (t=0, t_eff=0, n_pure_z=0, n=0, rank=0, nullity=0, predicted_chi=1, independent_rows=Int[])
+        return (t=0, n=0, rank=0, nullity=0, predicted_chi=1, independent_rows=Int[])
     end
 
     t = length(twisted_paulis)
@@ -427,10 +415,6 @@ function analyze_gf2_structure(twisted_paulis::Vector{<:PauliOperator})
     M = build_gf2_matrix(twisted_paulis)
     M_copy = copy(M)
 
-    # Count non-zero rows (non-diagonal Paulis that actually increase bond dim)
-    t_eff = count(row -> any(M[row, :]), 1:size(M, 1))
-    n_pure_z = t - t_eff
-
     # Perform elimination and track pivots
     r = gf2_rank!(M_copy)
 
@@ -438,14 +422,12 @@ function analyze_gf2_structure(twisted_paulis::Vector{<:PauliOperator})
     # This requires re-running elimination with tracking
     independent_rows = find_independent_rows(M)
 
-    # Nullity uses t_eff, not t, because pure Z Paulis don't increase bond dim
-    nullity = max(0, t_eff - r)
+    # Nullity = t - rank = null space dimension (Liu & Clark formula)
+    nullity = max(0, t - r)
     predicted_chi = nullity >= 62 ? (typemax(Int) ÷ 2) : 2^nullity
 
     return (
         t=t,
-        t_eff=t_eff,
-        n_pure_z=n_pure_z,
         n=n,
         rank=r,
         nullity=nullity,

@@ -273,7 +273,7 @@ function apply_ofd!(state::CAMPSState, P_twisted::PauliOperator, θ::Real,
     mark_as_magic!(state, control_qubit)
 
     # Step 5: Record the twisted Pauli for GF(2) analysis
-    #add_twisted_pauli!(state, P_twisted)
+    add_twisted_pauli!(state, P_twisted)
 
     return state
 end

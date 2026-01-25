@@ -1,0 +1,25 @@
+success,family,n_qubits,n_t_gates,n_total_gates,ofd_success,ofd_fail,ofd_rate,final_chi,final_nu,final_S2,runtime,seed,extra_metadata,density
+true,Grover Search,4,168,460,1,95,0.010416666666666666,4,4,0.6790150683115386,15676.304931163788,996364796,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,460,1,95,0.010416666666666666,4,4,0.576952578364772,15022.18201994896,3723045702,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,468,1,95,0.010416666666666666,4,4,0.8996330818520419,14433.478309869766,3744636056,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,468,1,95,0.010416666666666666,4,4,0.692981742986593,14743.8812520504,2473289339,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,460,1,95,0.010416666666666666,4,4,0.576952578364772,9459.367270946503,232083648,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,468,1,95,0.010416666666666666,4,4,0.9318748330661755,8638.140721797943,1978415179,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,468,1,95,0.010416666666666666,4,4,0.43595598399073204,9553.452695131302,2015801262,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,168,468,1,95,0.010416666666666666,4,4,0.8996330818520419,8917.295428991318,4121162144,"Dict{String, Any}(""density"" => ""full"")",full
+true,Grover Search,4,84,236,1,47,0.020833333333333332,4,4,0.5750916104040497,3944.6165080070496,3139169573,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,228,1,47,0.020833333333333332,4,4,0.8837380905008316,4281.897695064545,2767158346,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,228,2,46,0.041666666666666664,4,4,0.6560759139440916,4155.816382884979,1258029148,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,228,2,46,0.041666666666666664,4,4,0.6560759139440916,4155.621560096741,1967157552,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,236,1,47,0.020833333333333332,4,4,0.5750916104040497,3956.0184469223022,1228874987,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,228,2,46,0.041666666666666664,4,4,0.7680287925185454,4148.3879380226135,878679201,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,236,1,47,0.020833333333333332,4,4,0.5504729998016046,4114.7552671432495,325807974,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,84,224,2,46,0.041666666666666664,4,4,0.7990556663807075,4644.703588008881,2098986893,"Dict{String, Any}(""density"" => ""half"")",half
+true,Grover Search,4,42,120,1,23,0.041666666666666664,4,4,0.707254379447632,1701.4471690654755,3818736380,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,118,1,23,0.041666666666666664,4,4,0.7617404582612598,1831.0366790294647,3390023056,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,120,1,23,0.041666666666666664,4,4,0.707254379447632,1697.8425278663635,2142616622,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,118,2,22,0.08333333333333333,4,4,0.9697656749028981,1685.0312840938568,89519362,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,120,1,23,0.041666666666666664,4,4,0.707254379447632,1698.07439494133,189935611,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,118,1,23,0.041666666666666664,4,4,0.8859363390520975,2358.5049209594727,964252105,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,114,2,22,0.08333333333333333,4,4,0.521413382804345,2027.2392420768738,4214699121,"Dict{String, Any}(""density"" => ""quarter"")",quarter
+true,Grover Search,4,42,116,2,22,0.08333333333333333,4,4,0.6479899074950827,1720.5998940467834,1650723209,"Dict{String, Any}(""density"" => ""quarter"")",quarter

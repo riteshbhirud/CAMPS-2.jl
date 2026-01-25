@@ -78,14 +78,18 @@ using LinearAlgebra
         end
 
         @testset "Known Cliffords" begin
-            # CNOT(1,2)
+            # CNOT(1,2) - control on qubit 1, target on qubit 2
             D = one(Destabilizer, 2)
             apply!(D, sCNOT(1, 2))
             C = CliffordOperator(D)
             U = clifford_to_matrix(C)
 
-            # CNOT matrix: |00⟩→|00⟩, |01⟩→|01⟩, |10⟩→|11⟩, |11⟩→|10⟩
-            CNOT_expected = ComplexF64[1 0 0 0; 0 1 0 0; 0 0 0 1; 0 0 1 0]
+            # CNOT matrix in LITTLE-ENDIAN convention (bit k → qubit k+1):
+            # Index 0: |q1=0,q2=0⟩, Index 1: |q1=1,q2=0⟩, Index 2: |q1=0,q2=1⟩, Index 3: |q1=1,q2=1⟩
+            # CNOT flips q2 when q1=1:
+            # |q1=0,q2=0⟩→|q1=0,q2=0⟩ (0→0), |q1=1,q2=0⟩→|q1=1,q2=1⟩ (1→3)
+            # |q1=0,q2=1⟩→|q1=0,q2=1⟩ (2→2), |q1=1,q2=1⟩→|q1=1,q2=0⟩ (3→1)
+            CNOT_expected = ComplexF64[1 0 0 0; 0 0 0 1; 0 0 1 0; 0 1 0 0]
             @test U ≈ CNOT_expected atol=1e-10
         end
     end
